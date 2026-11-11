@@ -20,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Siapkan proyek (buat package.json, config, dan folder www)
+      - name: Siapkan proyek (package.json, config, www, skrip layar kedua)
         run: |
           HTML_FILE=$(ls *.html | head -n 1)
           echo "File HTML yang dipakai: $HTML_FILE"
@@ -51,6 +51,102 @@ jobs:
           }
           JSON
 
+          # Halaman yang tampil di proyektor (layar kedua)
+          cat > www/projector.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id" class="dark">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Proyektor</title>
+            <script src="tailwind.js" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s)"></script>
+            <style>
+              body { font-family: sans-serif; margin: 0; background: #020617; }
+            </style>
+          </head>
+          <body class="bg-slate-950 text-slate-100">
+            <div class="min-h-screen flex flex-col justify-between p-6 sm:p-10">
+              <header class="flex items-center border-b border-slate-800 pb-4">
+                <h1 class="text-xl sm:text-3xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI</h1>
+              </header>
+              <main id="pmain" class="my-auto py-8"></main>
+              <footer id="pfooter" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3"></footer>
+            </div>
+            <script>
+              function setContent(m, f) {
+                document.getElementById('pmain').innerHTML = m;
+                document.getElementById('pfooter').innerHTML = f;
+              }
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Skrip penghubung tablet -> layar proyektor
+          cat > www/second-screen.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var SS = isNative && cap.Plugins ? cap.Plugins.SecondScreen : null;
+            var active = false;
+            var last = '';
+            var origOpen = window.handleOpenProjector;
+            var origRender = window.renderProjectorOverlayContent;
+
+            function setBtn() {
+              var b = document.querySelector('[onclick="handleOpenProjector()"]');
+              if (!b) return;
+              var sp = b.querySelectorAll('span');
+              if (sp[0]) sp[0].textContent = active ? 'Tutup Layar Proyektor' : 'Buka Mode Proyektor';
+              if (sp[1]) sp[1].textContent = active ? 'Tutup' : 'Proyektor';
+            }
+
+            function push() {
+              if (!active || !SS) return;
+              var m = document.getElementById('projector-main-content');
+              var f = document.getElementById('projector-footer-teams');
+              if (!m || !f) return;
+              var key = m.innerHTML + '|' + f.innerHTML;
+              if (key === last) return;
+              last = key;
+              SS.update({ main: m.innerHTML, footer: f.innerHTML }).catch(function () {});
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              origRender();
+              push();
+            };
+
+            window.handleOpenProjector = async function () {
+              if (SS) {
+                if (active) {
+                  try { await SS.hide(); } catch (e) {}
+                  active = false; last = ''; setBtn();
+                  return;
+                }
+                try {
+                  var r = await SS.isAvailable();
+                  if (r && r.available) {
+                    await SS.show();
+                    active = true; last = ''; setBtn(); push();
+                    return;
+                  }
+                } catch (e) {}
+                alert('Layar proyektor tidak terdeteksi. Pastikan kabel HDMI/USB-C tersambung. Memakai mode proyektor di layar tablet.');
+              }
+              origOpen();
+            };
+
+            if (SS) {
+              try {
+                SS.addListener('closed', function () { active = false; last = ''; setBtn(); });
+              } catch (e) {}
+            }
+          })();
+          JS
+
+          sed -i 's#</body>#<script src="second-screen.js"></script></body>#' www/index.html
+
       - name: Install dependencies
         run: npm install
 
@@ -66,9 +162,159 @@ jobs:
           sed -i '/fonts.googleapis.com/d' index.html
 
       - name: Tambah platform Android
+        run: npx cap add android
+
+      - name: Tambah kode native layar kedua (HDMI / USB-C)
         run: |
-          npx cap add android
-          npx cap sync android
+          DIR=android/app/src/main/java/com/kuislelang/ai
+          mkdir -p $DIR
+
+          cat > $DIR/MainActivity.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(SecondScreenPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA
+
+          cat > $DIR/SecondScreenPlugin.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.app.Presentation;
+          import android.content.Context;
+          import android.hardware.display.DisplayManager;
+          import android.os.Bundle;
+          import android.view.Display;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "SecondScreen")
+          public class SecondScreenPlugin extends Plugin {
+              private Presentation presentation;
+              private WebView projectorWeb;
+              private boolean loaded = false;
+              private String pendingMain = "";
+              private String pendingFooter = "";
+
+              private Display findDisplay() {
+                  DisplayManager dm = (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
+                  Display[] ds = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+                  if (ds != null && ds.length > 0) return ds[0];
+                  Display[] all = dm.getDisplays();
+                  for (Display d : all) {
+                      if (d.getDisplayId() != Display.DEFAULT_DISPLAY) return d;
+                  }
+                  return null;
+              }
+
+              private void pushNow() {
+                  if (projectorWeb != null && loaded) {
+                      String js = "setContent(" + JSONObject.quote(pendingMain) + "," + JSONObject.quote(pendingFooter) + ");";
+                      projectorWeb.evaluateJavascript(js, null);
+                  }
+              }
+
+              @PluginMethod
+              public void isAvailable(PluginCall call) {
+                  JSObject r = new JSObject();
+                  r.put("available", findDisplay() != null);
+                  call.resolve(r);
+              }
+
+              @PluginMethod
+              public void show(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          if (presentation != null && presentation.isShowing()) {
+                              call.resolve();
+                              return;
+                          }
+                          Display d = findDisplay();
+                          if (d == null) {
+                              call.reject("Tidak ada layar kedua");
+                              return;
+                          }
+                          loaded = false;
+                          presentation = new ProjectorPresentation(getActivity(), d);
+                          presentation.setOnDismissListener(dialog -> {
+                              presentation = null;
+                              projectorWeb = null;
+                              loaded = false;
+                              notifyListeners("closed", new JSObject());
+                          });
+                          presentation.show();
+                          call.resolve();
+                      } catch (Exception e) {
+                          call.reject(String.valueOf(e.getMessage()));
+                      }
+                  });
+              }
+
+              @PluginMethod
+              public void update(final PluginCall call) {
+                  pendingMain = call.getString("main", "");
+                  pendingFooter = call.getString("footer", "");
+                  getActivity().runOnUiThread(() -> pushNow());
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void hide(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (presentation != null) presentation.dismiss();
+                      call.resolve();
+                  });
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  if (presentation != null) presentation.dismiss();
+                  super.handleOnDestroy();
+              }
+
+              private class ProjectorPresentation extends Presentation {
+                  ProjectorPresentation(Context ctx, Display display) {
+                      super(ctx, display);
+                  }
+
+                  @Override
+                  protected void onCreate(Bundle savedInstanceState) {
+                      super.onCreate(savedInstanceState);
+                      projectorWeb = new WebView(getContext());
+                      projectorWeb.setBackgroundColor(0xFF020617);
+                      WebSettings s = projectorWeb.getSettings();
+                      s.setJavaScriptEnabled(true);
+                      s.setDomStorageEnabled(true);
+                      projectorWeb.setWebViewClient(new WebViewClient() {
+                          @Override
+                          public void onPageFinished(WebView view, String url) {
+                              loaded = true;
+                              pushNow();
+                          }
+                      });
+                      setContentView(projectorWeb);
+                      projectorWeb.loadUrl("file:///android_asset/public/projector.html");
+                  }
+              }
+          }
+          JAVA
+
+      - name: Sinkronisasi aset web ke Android
+        run: npx cap sync android
 
       - name: Build APK debug
         run: |
