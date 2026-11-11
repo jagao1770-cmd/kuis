@@ -1,0 +1,83 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Siapkan proyek (buat package.json, config, dan folder www)
+        run: |
+          HTML_FILE=$(ls *.html | head -n 1)
+          echo "File HTML yang dipakai: $HTML_FILE"
+          mkdir -p www
+          cp "$HTML_FILE" www/index.html
+
+          cat > package.json <<'JSON'
+          {
+            "name": "kuis-lelang-ai",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.2.0",
+              "@capacitor/core": "^6.2.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.2.0"
+            }
+          }
+          JSON
+
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.kuislelang.ai",
+            "appName": "Kuis Lelang AI",
+            "webDir": "www",
+            "android": { "allowMixedContent": true }
+          }
+          JSON
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bundle library supaya bisa offline (Tailwind dan Lucide)
+        run: |
+          cd www
+          if curl -fsSL "https://cdn.tailwindcss.com/3.4.17" -o tailwind.js; then
+            sed -i 's#https://cdn.tailwindcss.com#tailwind.js#' index.html
+          fi
+          if curl -fsSL "https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" -o lucide.min.js; then
+            sed -i 's#https://unpkg.com/lucide@latest#lucide.min.js#' index.html
+          fi
+          sed -i '/fonts.googleapis.com/d' index.html
+
+      - name: Tambah platform Android
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Build APK debug
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kuis-Lelang-AI-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
