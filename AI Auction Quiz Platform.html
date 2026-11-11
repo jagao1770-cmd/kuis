@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform Kuis Lelang AI</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased">
+
+    <!-- PROJECTOR FULLSCREEN OVERLAY (DAPAT DIAKTIFKAN DI LAPTOP/TABLET) -->
+    <div id="projector-overlay" class="fixed inset-0 bg-slate-950 z-[100] hidden flex-col justify-between p-6 sm:p-10 overflow-y-auto">
+        <header class="flex justify-between items-center border-b border-slate-800 pb-4">
+            <div class="flex items-center space-x-3">
+                <span class="p-2 bg-indigo-600/20 border border-indigo-500/30 rounded-xl text-indigo-400 font-bold">🖥️</span>
+                <h1 class="text-xl sm:text-2xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI (TAMPILAN PROYEKTOR / AUDIENS)</h1>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="toggleFullScreen()" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition cursor-pointer">
+                    🖥️ Layar Penuh
+                </button>
+                <button onclick="closeProjectorOverlay()" class="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition cursor-pointer">
+                    ✕ Tutup Proyektor
+                </button>
+            </div>
+        </header>
+
+        <main id="projector-main-content" class="my-auto py-8">
+            <!-- Diisi dinamis via JS -->
+        </main>
+
+        <footer id="projector-footer-teams" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <!-- Diisi dinamis via JS -->
+        </footer>
+    </div>
+
+    <!-- HEADER UTAMA -->
+    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-indigo-600/20 border border-indigo-500/30 rounded-xl">
+                    <i data-lucide="gavel" class="w-6 h-6 text-indigo-400"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-extrabold text-white tracking-wide">
+                        ARENA LELANG KUIS AI
+                    </h1>
+                    <p class="text-xs text-slate-400">Platform Kuis Edukasi Berbasis Lelang Poin</p>
+                </div>
+            </div>
+
+            <!-- TAB NAVIGASI & KONTROL PROYEKTOR -->
+            <div class="flex items-center space-x-2">
+                <button
+                    onclick="handleOpenProjector()"
+                    class="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer"
+                    title="Buka mode proyektor (Dukungan Laptop & Tablet)"
+                >
+                    <i data-lucide="tv" class="w-4 h-4"></i>
+                    <span class="hidden sm:inline">Buka Mode Proyektor</span>
+                    <span class="sm:hidden">Proyektor</span>
+                </button>
+
+                <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                        onclick="switchTab('web1')"
+                        id="btn-tab-web1"
+                        class="px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                    >
+                        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                        <span>Web 1: Input Soal</span>
+                    </button>
+                    <button
+                        onclick="switchTab('web2')"
+                        id="btn-tab-web2"
+                        class="px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 bg-indigo-600 text-white shadow-md cursor-pointer"
+                    >
+                        <i data-lucide="trophy" class="w-4 h-4"></i>
+                        <span>Web 2: Dashboard Lelang</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- KONTEN UTAMA -->
+    <main class="max-w-7xl mx-auto px-4 py-6 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+
+        <!-- ================= WEB 1: PORTAL INPUT SOAL KELOMPOK ================= -->
+        <div id="view-web1" class="lg:col-span-12 hidden grid-cols-1 lg:grid-cols-12 gap-6">
+            <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                <div class="border-b border-slate-800 pb-4">
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <i data-lucide="plus-circle" class="w-5 h-5 text-indigo-400"></i>
+                        <span>Portal Input Soal Kelompok</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">
+                        Setiap kelompok dapat memasukkan soal rahasia beserta kunci jawaban.
+                    </p>
+                </div>
+
+                <form onsubmit="handleAddQuestion(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                            Pilih Kelompok Anda:
+                        </label>
+                        <select
+                            id="web1-team-select"
+                            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:ring-2 focus:ring-indigo-500"
+                        >
+                            <!-- Diisi via JS -->
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                            Pertanyaan Soal:
+                        </label>
+                        <textarea
+                            id="web1-question-text"
+                            rows="3"
+                            required
+                            placeholder="Tuliskan pertanyaan soal di sini..."
+                            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:ring-2 focus:ring-indigo-500"
+                        ></textarea>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                            Kunci Jawaban Resmi:
+                        </label>
+                        <input
+                            type="text"
+                            id="web1-correct-answer"
+                            required
+                            placeholder="Kunci jawaban tepat..."
+                            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:ring-2 focus:ring-indigo-500"
+                        >
+                    </div>
+
+                    <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl text-[11px] text-slate-400 flex items-center space-x-2">
+                        <i data-lucide="info" class="w-4 h-4 text-indigo-400 shrink-0"></i>
+                        <span>Harga lelang awal soal ditentukan oleh Panitia/Host langsung di Dashboard Lelang (Web 2).</span>
+                    </div>
+
+                    <button
+                        type="submit"
+                        id="web1-submit-btn"
+                        class="w-full py-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 cursor-pointer"
+                    >
+                        <i data-lucide="lock" class="w-4 h-4"></i>
+                        <span>Simpan Soal Secara Rahasia</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- DAFTAR BANK SOAL RAHASIA WEB 1 -->
+            <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <h2 id="web1-bank-title" class="text-lg font-bold text-white border-b border-slate-800 pb-3">
+                    Daftar Bank Soal Rahasia
+                </h2>
+                <p class="text-xs text-slate-400">
+                    Catatan: Pengelolaan dan penghapusan soal dikontrol penuh melalui Dashboard Web 2 oleh host.
+                </p>
+
+                <div id="web1-questions-list" class="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                    <!-- Diisi via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= WEB 2: DASHBOARD GAME & ARENA LELANG ================= -->
+        <div id="view-web2" class="lg:col-span-12 grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- KLASEMEN POIN KELOMPOK -->
+            <div class="lg:col-span-4 space-y-6">
+                <!-- PANEL MANAJEMEN KELOMPOK -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center space-x-1.5">
+                            <i data-lucide="users" class="w-4 h-4"></i>
+                            <span>Atur Jumlah Kelompok</span>
+                        </h3>
+                        <span id="team-count-badge" class="text-[11px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-mono">0 Kelompok</span>
+                    </div>
+                    <form onsubmit="handleAddNewTeam(event)" class="flex space-x-2">
+                        <input
+                            type="text"
+                            id="new-team-name-input"
+                            required
+                            placeholder="Nama Kelompok Baru..."
+                            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <button
+                            type="submit"
+                            class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shrink-0 flex items-center space-x-1 cursor-pointer"
+                        >
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                            <span>Tambah</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="trophy" class="w-5 h-5 text-amber-400"></i>
+                            <h2 class="text-base font-bold text-white">Klasemen Poin Kelompok</h2>
+                        </div>
+                        <button 
+                            onclick="handleResetAllData()" 
+                            class="text-[10px] text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-2 py-1 rounded border border-rose-500/20 font-medium transition cursor-pointer"
+                            title="Reset ulang semua poin & soal ke kondisi awal"
+                        >
+                            Reset Total Game
+                        </button>
+                    </div>
+
+                    <div id="leaderboard-container" class="space-y-3">
+                        <!-- Diisi via JS -->
+                    </div>
+                </div>
+
+                <!-- RIWAYAT PENAWARAN -->
+                <div id="bid-history-card" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl hidden">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center space-x-2">
+                        <i data-lucide="clock" class="w-4 h-4 text-indigo-400"></i>
+                        <span>Riwayat Penawaran Lelang</span>
+                    </h3>
+                    <div id="bid-history-list" class="space-y-2 max-h-48 overflow-y-auto pr-1 text-xs">
+                        <!-- Diisi via JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- ARENA UTAMA LELANG & SOAL -->
+            <div class="lg:col-span-8 space-y-6" id="web2-main-arena">
+                <!-- Dirender dinamis via JS -->
+            </div>
+
+        </div>
+
+    </main>
+
+    <footer class="border-t border-slate-800 bg-slate-900/60 py-4 mt-auto">
+        <div class="max-w-7xl mx-auto px-4 text-center text-xs text-slate-500">
+            Platform Kuis Lelang AI &copy; 2026 — Sistem Evaluasi Terproteksi Real-Time
+        </div>
+    </footer>
+
+    <!-- JAVASCRIPT APLIKASI UTAMA -->
+    <script>
+        const STORAGE_KEY_TEAMS = 'AUCTION_QUIZ_TEAMS_V3';
+        const STORAGE_KEY_QUESTIONS = 'AUCTION_QUIZ_QUESTIONS_V3';
+        const STORAGE_KEY_GAMESTATE = 'AUCTION_QUIZ_GAMESTATE_V3';
+
+        const DEFAULT_TEAMS = [
+            { id: 'team-1', name: 'Kelompok 1 (Alpha)', points: 100, color: 'bg-blue-600' },
+            { id: 'team-2', name: 'Kelompok 2 (Beta)', points: 100, color: 'bg-emerald-600' },
+            { id: 'team-3', name: 'Kelompok 3 (Gamma)', points: 100, color: 'bg-amber-600' },
+            { id: 'team-4', name: 'Kelompok 4 (Delta)', points: 100, color: 'bg-purple-600' }
+        ];
+
+        const DEFAULT_QUESTIONS = [
+            {
+                id: 'q-1',
+                teamId: 'team-1',
+                questionText: 'Apa nama jaringan pembuluh yang mengangkut air dan mineral dari akar ke daun pada tumbuhan?',
+                correctAnswer: 'Xilem',
+                initialBidPrice: 15,
+                status: 'ready'
+            },
+            {
+                id: 'q-2',
+                teamId: 'team-2',
+                questionText: 'Sebutkan hukum Fisika yang menyatakan bahwa gaya berbanding lurus dengan massa dan percepatan (F = m.a)!',
+                correctAnswer: 'Hukum II Newton',
+                initialBidPrice: 20,
+                status: 'ready'
+            }
+        ];
+
+        let activeTab = 'web2';
+        let teams = loadData(STORAGE_KEY_TEAMS, DEFAULT_TEAMS);
+        let questions = loadData(STORAGE_KEY_QUESTIONS, DEFAULT_QUESTIONS);
+
+        let gameState = 'IDLE';
+        let activeQuestionId = null;
+        let highestBid = 0;
+        let highestBidderId = null;
+        let bidHistory = [];
+        
+        let timeLeft = 120;
+        let timerInterval = null;
+        let showCorrectAnswer = false;
+        let studentAnswerInput = '';
+        let evaluationResult = null;
+        let isRecording = false;
+        let recognition = null;
+
+        function loadData(key, fallback) {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved ? JSON.parse(saved) : fallback;
+            } catch (e) {
+                return fallback;
+            }
+        }
+
+        function saveData() {
+            try {
+                localStorage.setItem(STORAGE_KEY_TEAMS, JSON.stringify(teams));
+                localStorage.setItem(STORAGE_KEY_QUESTIONS, JSON.stringify(questions));
+                
+                const gameStatePayload = {
+                    gameState,
+                    activeQuestionId,
+                    highestBid,
+                    highestBidderId,
+                    bidHistory,
+                    timeLeft,
+                    evaluationResult,
+                    timestamp: Date.now()
+                };
+                localStorage.setItem(STORAGE_KEY_GAMESTATE, JSON.stringify(gameStatePayload));
+            } catch (e) {
+                console.error("Gagal menyimpan data", e);
+            }
+        }
+
+        window.addEventListener('storage', function(e) {
+            if (e.key === STORAGE_KEY_TEAMS) teams = JSON.parse(e.newValue || '[]');
+            if (e.key === STORAGE_KEY_QUESTIONS) questions = JSON.parse(e.newValue || '[]');
+            if (e.key === STORAGE_KEY_GAMESTATE && e.newValue) {
+                const stateData = JSON.parse(e.newValue);
+                gameState = stateData.gameState;
+                activeQuestionId = stateData.activeQuestionId;
+                highestBid = stateData.highestBid;
+                highestBidderId = stateData.highestBidderId;
+                bidHistory = stateData.bidHistory || [];
+                timeLeft = stateData.timeLeft;
+                evaluationResult = stateData.evaluationResult;
+            }
+            renderApp();
+        });
+
+        window.onload = function() {
+            initSpeechRecognition();
+            renderApp();
+        };
+
+        function renderApp() {
+            renderWeb1();
+            renderLeaderboard();
+            renderWeb2Arena();
+            renderProjectorOverlayContent();
+            if (window.lucide && typeof lucide.createIcons === 'function') {
+                lucide.createIcons();
+            }
+        }
+
+        function handleOpenProjector() {
+            const overlay = document.getElementById('projector-overlay');
+            if (overlay) {
+                overlay.classList.remove('hidden');
+                overlay.classList.add('flex');
+                renderProjectorOverlayContent();
+            }
+        }
+
+        function closeProjectorOverlay() {
+            const overlay = document.getElementById('projector-overlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                overlay.classList.remove('flex');
+            }
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.log(err));
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        }
+
+        function renderProjectorOverlayContent() {
+            const main = document.getElementById('projector-main-content');
+            const footer = document.getElementById('projector-footer-teams');
+            if (!main || !footer) return;
+
+            const currentQ = questions.find(q => q.id === activeQuestionId);
+            const bidderTeam = highestBidderId ? teams.find(t => t.id === highestBidderId) : null;
+            const authorTeam = currentQ ? teams.find(t => t.id === currentQ.teamId) : null;
+            const sortedTeams = [...teams].sort((a, b) => b.points - a.points);
+
+            if (gameState === 'IDLE') {
+                main.innerHTML = `
+                    <div class="text-center py-12 space-y-4">
+                        <h2 class="text-3xl sm:text-5xl font-extrabold text-white">SELAMAT DATANG DI ARENA KUIS LELANG</h2>
+                        <p class="text-slate-400 text-base sm:text-xl">Menunggu panitia memilih soal lelang berikutnya...</p>
+                    </div>
+                `;
+            } else if (gameState === 'BIDDING') {
+                main.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6 text-center max-w-4xl mx-auto shadow-2xl">
+                        <span class="text-sm font-bold text-amber-400 uppercase tracking-widest">LELANG BERLANGSUNG</span>
+                        <h2 class="text-xl sm:text-3xl font-bold text-white">Soal Milik: ${authorTeam ? authorTeam.name : ''}</h2>
+                        <div class="py-6 bg-slate-950 border border-slate-800 rounded-2xl">
+                            <span class="text-xs sm:text-sm text-slate-400 block mb-1">Tawaran Lelang Tertinggi Saat Ini</span>
+                            <span class="text-5xl sm:text-7xl font-black text-amber-400">${highestBid} <span class="text-xl sm:text-2xl font-bold text-slate-400">POIN</span></span>
+                            ${bidderTeam ? `<p class="text-indigo-400 font-bold mt-2 text-base sm:text-lg">Oleh: ${bidderTeam.name}</p>` : ''}
+                        </div>
+                        <p class="text-slate-400 italic text-sm sm:text-base">" Soal disembunyikan sampai pemenang lelang ditentukan! "</p>
+                    </div>
+                `;
+            } else if (gameState === 'ANSWERING') {
+                main.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6 max-w-4xl mx-auto shadow-2xl">
+                        <div class="flex justify-between items-center bg-slate-950 p-6 rounded-2xl border border-slate-800">
+                            <div>
+                                <span class="text-xs text-slate-400 uppercase block font-bold">Pemenang Lelang</span>
+                                <span class="text-xl sm:text-3xl font-black text-amber-400">${bidderTeam ? bidderTeam.name : ''}</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs text-rose-400 block font-bold uppercase">Sisa Waktu</span>
+                                <span class="text-4xl sm:text-6xl font-mono font-black text-rose-400">${formatTime(timeLeft)}</span>
+                            </div>
+                        </div>
+                        <div class="p-6 sm:p-8 bg-indigo-950/40 border border-indigo-500/30 rounded-2xl space-y-3">
+                            <span class="text-xs font-bold text-indigo-400 uppercase">Pertanyaan Soal:</span>
+                            <p class="text-xl sm:text-3xl font-bold text-white leading-relaxed">"${currentQ ? currentQ.questionText : ''}"</p>
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'RESULT') {
+                main.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-6 text-center max-w-3xl mx-auto shadow-2xl">
+                        <h2 class="text-2xl sm:text-4xl font-black ${evaluationResult && evaluationResult.isCorrect ? 'text-emerald-400' : 'text-rose-500'}">
+                            ${evaluationResult && evaluationResult.isCorrect ? 'JAWABAN BENAR!' : 'JAWABAN SALAH / TIMEOUT'}
+                        </h2>
+                        <p class="text-base sm:text-xl text-slate-300 font-semibold">${evaluationResult ? evaluationResult.feedback : ''}</p>
+                    </div>
+                `;
+            }
+
+            footer.innerHTML = sortedTeams.map(t => `
+                <div class="p-3 bg-slate-900 border border-slate-800 rounded-xl flex justify-between items-center">
+                    <span class="text-xs font-bold text-white truncate">${t.name}</span>
+                    <span class="text-sm sm:text-base font-extrabold text-amber-400">${t.points} Pts</span>
+                </div>
+            `).join('');
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            renderApp();
+        }
+
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.lang = 'id-ID';
+                recognition.interimResults = false;
+
+                recognition.onstart = function() {
+                    isRecording = true;
+                    renderApp();
+                };
+
+                recognition.onresult = function(event) {
+                    const transcript = event.results[0][0].transcript;
+                    studentAnswerInput = studentAnswerInput ? (studentAnswerInput + ' ' + transcript) : transcript;
+                    isRecording = false;
+                    renderApp();
+                };
+
+                recognition.onerror = function() {
+                    isRecording = false;
+                    renderApp();
+                };
+
+                recognition.onend = function() {
+                    isRecording = false;
+                    renderApp();
+                };
+            }
+        }
+
+        function toggleSpeechRecognition() {
+            if (!recognition) {
+                alert("Browser Anda tidak mendukung Speech-to-Text secara otomatis. Silakan ketik langsung di kolom.");
+                return;
+            }
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    isRecording = false;
+                    renderApp();
+                }
+            }
+        }
+
+        function handleAddQuestion(e) {
+            e.preventDefault();
+            const teamId = document.getElementById('web1-team-select').value;
+            const text = document.getElementById('web1-question-text').value.trim();
+            const answer = document.getElementById('web1-correct-answer').value.trim();
+
+            if (!teamId || !text || !answer) return;
+
+            const newQ = {
+                id: 'q-' + Date.now(),
+                teamId: teamId,
+                questionText: text,
+                correctAnswer: answer,
+                initialBidPrice: 10,
+                status: 'ready'
+            };
+
+            questions.push(newQ);
+            saveData();
+            
+            document.getElementById('web1-question-text').value = '';
+            document.getElementById('web1-correct-answer').value = '';
+            
+            alert("Soal berhasil disimpan secara rahasia!");
+            renderApp();
+        }
+
+        function handleAddNewTeam(e) {
+            e.preventDefault();
+            const input = document.getElementById('new-team-name-input');
+            const name = input.value.trim();
+            if (!name) return;
+
+            const colors = ['bg-blue-600', 'bg-emerald-600', 'bg-amber-600', 'bg-purple-600', 'bg-rose-600', 'bg-indigo-600', 'bg-teal-600'];
+            const randomColor = colors[teams.length % colors.length];
+
+            teams.push({
+                id: 'team-' + Date.now(),
+                name: name,
+                points: 100,
+                color: randomColor
+            });
+
+            input.value = '';
+            saveData();
+            renderApp();
+        }
+
+        function handleDeleteTeam(teamId) {
+            if (confirm("Hapus kelompok ini? Seluruh soal milik kelompok ini juga akan terhapus.")) {
+                teams = teams.filter(t => t.id !== teamId);
+                questions = questions.filter(q => q.teamId !== teamId);
+                saveData();
+                renderApp();
+            }
+        }
+
+        function handleDeleteQuestion(qId) {
+            if (confirm("Apakah Anda yakin ingin menghapus soal ini dari bank soal?")) {
+                questions = questions.filter(q => q.id !== qId);
+                if (activeQuestionId === qId) {
+                    resetGameSession();
+                } else {
+                    saveData();
+                    renderApp();
+                }
+            }
+        }
+
+        function handleResetAllData() {
+            if (confirm("Reset ulang semua data poin dan soal ke posisi awal?")) {
+                teams = JSON.parse(JSON.stringify(DEFAULT_TEAMS));
+                questions = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
+                resetGameSession();
+            }
+        }
+
+        function startAuction(qId) {
+            const initialBid = prompt("Masukkan Harga Lelang Awal (Poin) untuk soal ini:", "10");
+            if (initialBid === null) return;
+            
+            const bidVal = parseInt(initialBid, 10);
+            if (isNaN(bidVal) || bidVal <= 0) {
+                alert("Masukkan harga lelang awal yang valid!");
+                return;
+            }
+
+            activeQuestionId = qId;
+            highestBid = bidVal;
+            highestBidderId = null;
+            bidHistory = [];
+            gameState = 'BIDDING';
+            studentAnswerInput = '';
+            showCorrectAnswer = false;
+            evaluationResult = null;
+
+            questions = questions.map(q => q.id === qId ? { ...q, status: 'auctioning' } : q);
+            saveData();
+            renderApp();
+        }
+
+        function placeBid(teamId, amountVal) {
+            const q = questions.find(item => item.id === activeQuestionId);
+            if (!q) return;
+
+            if (q.teamId === teamId) {
+                alert("⚠️ ATURAN LELANG: Kelompok pembuat soal dilarang menawar soal mereka sendiri!");
+                return;
+            }
+
+            const bidder = teams.find(t => t.id === teamId);
+            const amount = Number(amountVal);
+
+            if (isNaN(amount) || amount <= 0) {
+                alert("Masukkan nominal penawaran lelang yang valid!");
+                return;
+            }
+
+            if (amount <= highestBid) {
+                alert("Penawaran harus lebih tinggi dari penawaran lelang saat ini (" + highestBid + " Poin)!");
+                return;
+            }
+
+            if (bidder.points < amount) {
+                alert("Poin " + bidder.name + " tidak mencukupi (" + bidder.points + " Poin tersisa)!");
+                return;
+            }
+
+            highestBid = amount;
+            highestBidderId = teamId;
+            bidHistory.unshift({
+                teamName: bidder.name,
+                amount: amount,
+                time: new Date().toLocaleTimeString()
+            });
+
+            saveData();
+            renderApp();
+        }
+
+        function finalizeAuction() {
+            if (!highestBidderId) {
+                alert("Belum ada pemenang lelang!");
+                return;
+            }
+
+            gameState = 'ANSWERING';
+            timeLeft = 120;
+            studentAnswerInput = '';
+            showCorrectAnswer = false;
+
+            questions = questions.map(q => q.id === activeQuestionId ? { ...q, status: 'answering' } : q);
+
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                if (timeLeft > 0) {
+                    timeLeft--;
+                    saveData();
+                    renderApp();
+                } else {
+                    clearInterval(timerInterval);
+                    handleTimeoutPenalization();
+                }
+            }, 1000);
+
+            saveData();
+            renderApp();
+        }
+
+        function handleTimeoutPenalization() {
+            if (!highestBidderId) return;
+
+            teams = teams.map(t => t.id === highestBidderId ? { ...t, points: Math.max(0, t.points - highestBid) } : t);
+            
+            evaluationResult = {
+                isCorrect: false,
+                isTimeout: true,
+                penalty: highestBid,
+                feedback: `Kehabisan Waktu (2 Menit)! Poin dipotong sebesar nilai lelang tertinggi (${highestBid} Poin).`
+            };
+
+            gameState = 'RESULT';
+            questions = questions.map(q => q.id === activeQuestionId ? { ...q, status: 'completed' } : q);
+            
+            saveData();
+            renderApp();
+        }
+
+        function handleAnswerDecision(isCorrect) {
+            if (timerInterval) clearInterval(timerInterval);
+
+            const bidder = teams.find(t => t.id === highestBidderId);
+
+            if (isCorrect) {
+                evaluationResult = {
+                    isCorrect: true,
+                    penalty: 0,
+                    feedback: `Jawaban Dinyatakan BENAR! Poin ${bidder ? bidder.name : ''} tetap utuh.`
+                };
+            } else {
+                teams = teams.map(t => t.id === highestBidderId ? { ...t, points: Math.max(0, t.points - highestBid) } : t);
+                evaluationResult = {
+                    isCorrect: false,
+                    penalty: highestBid,
+                    feedback: `Jawaban Dinyatakan SALAH! Poin ${bidder ? bidder.name : ''} dipotong ${highestBid} Poin.`
+                };
+            }
+
+            gameState = 'RESULT';
+            questions = questions.map(q => q.id === activeQuestionId ? { ...q, status: 'completed' } : q);
+            
+            saveData();
+            renderApp();
+        }
+
+        function resetGameSession() {
+            if (timerInterval) clearInterval(timerInterval);
+            activeQuestionId = null;
+            highestBid = 0;
+            highestBidderId = null;
+            bidHistory = [];
+            gameState = 'IDLE';
+            timeLeft = 120;
+            showCorrectAnswer = false;
+            studentAnswerInput = '';
+            evaluationResult = null;
+            
+            saveData();
+            renderApp();
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function renderWeb1() {
+            const v1 = document.getElementById('view-web1');
+            const v2 = document.getElementById('view-web2');
+            const btn1 = document.getElementById('btn-tab-web1');
+            const btn2 = document.getElementById('btn-tab-web2');
+
+            if (activeTab === 'web1') {
+                v1.classList.remove('hidden');
+                v1.classList.add('grid');
+                v2.classList.add('hidden');
+                v2.classList.remove('grid');
+
+                btn1.className = "px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 bg-indigo-600 text-white shadow-md cursor-pointer";
+                btn2.className = "px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer";
+
+                const select = document.getElementById('web1-team-select');
+                if (select) {
+                    select.innerHTML = teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+                }
+
+                const bankTitle = document.getElementById('web1-bank-title');
+                if (bankTitle) {
+                    bankTitle.innerText = `Daftar Bank Soal Rahasia (${questions.length} Soal)`;
+                }
+                
+                const list = document.getElementById('web1-questions-list');
+                if (list) {
+                    list.innerHTML = questions.map(q => {
+                        const t = teams.find(item => item.id === q.teamId);
+                        return `
+                            <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="px-2.5 py-1 rounded font-bold text-white ${t ? t.color : 'bg-slate-700'}">
+                                        ${t ? t.name : 'Unknown'}
+                                    </span>
+                                    <span class="text-amber-400 font-bold bg-amber-400/10 px-2.5 py-1 rounded border border-amber-400/20">
+                                        Status: ${q.status.toUpperCase()}
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 font-mono italic">" Soal Disembunyikan (••••••••) "</p>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+            } else {
+                v1.classList.add('hidden');
+                v1.classList.remove('grid');
+                v2.classList.remove('hidden');
+                v2.classList.add('grid');
+
+                btn1.className = "px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer";
+                btn2.className = "px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 bg-indigo-600 text-white shadow-md cursor-pointer";
+            }
+        }
+
+        function renderLeaderboard() {
+            const countBadge = document.getElementById('team-count-badge');
+            if (countBadge) countBadge.innerText = `${teams.length} Kelompok`;
+            
+            const container = document.getElementById('leaderboard-container');
+            if (!container) return;
+
+            const sorted = [...teams].sort((a, b) => b.points - a.points);
+
+            container.innerHTML = sorted.map((t, idx) => `
+                <div class="p-3.5 rounded-xl border flex items-center justify-between transition-all ${
+                    highestBidderId === t.id
+                        ? 'bg-amber-500/10 border-amber-500/50 shadow-md shadow-amber-500/10'
+                        : 'bg-slate-800/50 border-slate-700/50'
+                }">
+                    <div class="flex items-center space-x-3">
+                        <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                            idx === 0 ? 'bg-amber-400 text-slate-950' : 'bg-slate-700 text-slate-300'
+                        }">
+                            ${idx + 1}
+                        </span>
+                        <div>
+                            <p class="text-xs font-bold text-white">${t.name}</p>
+                            ${highestBidderId === t.id ? `
+                                <span class="text-[10px] text-amber-400 font-semibold flex items-center space-x-1">
+                                    <i data-lucide="gavel" class="w-3 h-3 inline"></i> <span>Penawar Tertinggi</span>
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="flex items-center space-x-3">
+                        <div class="text-right">
+                            <span class="text-base font-extrabold text-amber-400">${t.points}</span>
+                            <span class="text-[10px] text-slate-400">pts</span>
+                        </div>
+                        <button onclick="handleDeleteTeam('${t.id}')" class="text-slate-500 hover:text-rose-400 p-1 rounded transition cursor-pointer" title="Hapus Kelompok">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            const historyCard = document.getElementById('bid-history-card');
+            const historyList = document.getElementById('bid-history-list');
+
+            if (historyCard && historyList) {
+                if (gameState !== 'IDLE') {
+                    historyCard.classList.remove('hidden');
+                    historyList.innerHTML = bidHistory.length === 0 
+                        ? `<p class="text-slate-500 italic">Belum ada penawaran...</p>`
+                        : bidHistory.map(item => `
+                            <div class="flex justify-between items-center py-1.5 border-b border-slate-800/60">
+                                <span class="font-semibold text-slate-200">${item.teamName}</span>
+                                <span class="text-amber-400 font-bold">${item.amount} Poin</span>
+                            </div>
+                        `).join('');
+                } else {
+                    historyCard.classList.add('hidden');
+                }
+            }
+        }
+
+        function renderWeb2Arena() {
+            const arena = document.getElementById('web2-main-arena');
+            if (!arena) return;
+
+            const currentQ = questions.find(q => q.id === activeQuestionId);
+            const authorTeam = currentQ ? teams.find(t => t.id === currentQ.teamId) : null;
+            const bidderTeam = highestBidderId ? teams.find(t => t.id === highestBidderId) : null;
+
+            if (gameState === 'IDLE') {
+                arena.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-white">Dashboard Host: Daftar Soal Lelang</h2>
+                                <p class="text-xs text-slate-400">Host dapat melihat isi soal & kunci jawaban secara utuh di sini</p>
+                            </div>
+                            <span class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full text-xs font-medium">
+                                Pilih Soal untuk Lelang
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${questions.map(q => {
+                                const t = teams.find(item => item.id === q.teamId);
+                                const isCompleted = q.status === 'completed';
+                                return `
+                                    <div class="p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
+                                        isCompleted ? 'bg-slate-900/40 border-slate-800 opacity-60' : 'bg-slate-800/80 border-slate-700 hover:border-indigo-500/50'
+                                    }">
+                                        <div>
+                                            <div class="flex justify-between items-center mb-2">
+                                                <span class="text-[11px] font-bold px-2.5 py-1 rounded text-white ${t ? t.color : 'bg-slate-700'}">Pembuat: ${t ? t.name : 'Unknown'}</span>
+                                            </div>
+                                            <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                                                <p class="text-xs text-white font-medium"><strong>Soal:</strong> ${q.questionText}</p>
+                                                <p class="text-xs text-indigo-400"><strong>Kunci:</strong> ${q.correctAnswer}</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex space-x-2">
+                                            <button
+                                                ${isCompleted ? 'disabled' : ''}
+                                                onclick="startAuction('${q.id}')"
+                                                class="flex-1 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 ${
+                                                    isCompleted ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 cursor-pointer'
+                                                }"
+                                            >
+                                                <i data-lucide="gavel" class="w-4 h-4"></i>
+                                                <span>${isCompleted ? 'Soal Selesai' : 'Mulai Lelang Soal Ini'}</span>
+                                            </button>
+                                            <button
+                                                onclick="handleDeleteQuestion('${q.id}')"
+                                                class="p-2.5 bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 rounded-xl transition cursor-pointer"
+                                                title="Hapus Soal"
+                                            >
+                                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'BIDDING') {
+                arena.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                        <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+                            <div>
+                                <span class="text-xs font-bold uppercase tracking-wider text-amber-400">Fase Lelang Berlangsung</span>
+                                <h2 class="text-lg font-bold text-white">Soal Milik: ${authorTeam ? authorTeam.name : ''}</h2>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs text-slate-400 block">Harga Lelang Tertinggi</span>
+                                <span class="text-2xl font-extrabold text-amber-400">${highestBid} Poin</span>
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-slate-950 border border-indigo-500/40 rounded-xl space-y-1">
+                            <span class="text-xs font-bold text-indigo-400 uppercase">Soal Terbuka di Dashboard Host:</span>
+                            <p class="text-sm font-semibold text-white">${currentQ ? currentQ.questionText : ''}</p>
+                            <p class="text-xs text-amber-400 font-semibold">Kunci: ${currentQ ? currentQ.correctAnswer : ''}</p>
+                        </div>
+
+                        <div class="space-y-4">
+                            <h3 class="text-xs font-bold uppercase text-slate-400">Masukan Tawaran Harga Lelang:</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                ${teams.map(t => {
+                                    const isAuthor = currentQ && t.id === currentQ.teamId;
+                                    const isHighest = highestBidderId === t.id;
+                                    return `
+                                        <div class="p-4 rounded-xl border flex flex-col justify-between space-y-3 ${
+                                            isAuthor ? 'bg-slate-900/50 border-slate-800 opacity-50' : isHighest ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-800/80 border-slate-700'
+                                        }">
+                                            <div class="flex justify-between items-center">
+                                                <div>
+                                                    <p class="text-xs font-bold text-white">${t.name}</p>
+                                                    <p class="text-[11px] text-slate-400">Poin: ${t.points}</p>
+                                                </div>
+                                                ${isHighest ? `<span class="text-[10px] bg-amber-400 text-slate-950 font-bold px-2 py-0.5 rounded">Tertinggi</span>` : ''}
+                                            </div>
+
+                                            ${isAuthor ? `
+                                                <span class="text-xs text-rose-400 bg-rose-500/10 px-3 py-1.5 rounded border border-rose-500/20 text-center font-medium">Pembuat Soal (Diblokir)</span>
+                                            ` : `
+                                                <div class="flex items-center space-x-2">
+                                                    <input
+                                                        type="number"
+                                                        id="input-bid-${t.id}"
+                                                        placeholder="Min: ${highestBid + 1}"
+                                                        class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500"
+                                                    />
+                                                    <button
+                                                        onclick="const v = document.getElementById('input-bid-${t.id}').value; if(v) placeBid('${t.id}', v);"
+                                                        class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 shrink-0 cursor-pointer"
+                                                    >
+                                                        <i data-lucide="gavel" class="w-3.5 h-3.5"></i>
+                                                        <span>Tawar</span>
+                                                    </button>
+                                                </div>
+                                            `}
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+
+                        <div class="pt-4 border-t border-slate-800 flex justify-between items-center">
+                            <button onclick="resetGameSession()" class="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-medium rounded-xl transition hover:bg-slate-700 cursor-pointer">
+                                Batal Lelang
+                            </button>
+                            <button
+                                ${!highestBidderId ? 'disabled' : ''}
+                                onclick="finalizeAuction()"
+                                class="px-6 py-3 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
+                                    highestBidderId ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 cursor-pointer' : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                }"
+                            >
+                                <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                                <span>Kunci Pemenang (${highestBid} Pts) & Mulai Timer</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'ANSWERING') {
+                arena.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                        <div class="flex justify-between items-center p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                            <div>
+                                <span class="text-[11px] text-slate-400 uppercase tracking-wider block">Pemenang Lelang</span>
+                                <span class="text-base font-bold text-amber-400">${bidderTeam ? bidderTeam.name : ''}</span>
+                            </div>
+                            <div class="flex items-center space-x-3 bg-rose-500/10 border border-rose-500/30 px-5 py-2.5 rounded-xl">
+                                <i data-lucide="clock" class="w-6 h-6 text-rose-400 animate-pulse"></i>
+                                <div>
+                                    <span class="text-[10px] text-rose-300 block uppercase font-medium">Timer 2 Menit</span>
+                                    <span class="text-2xl font-mono font-extrabold text-rose-400">${formatTime(timeLeft)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-6 bg-indigo-950/40 border border-indigo-500/30 rounded-2xl space-y-3">
+                            <span class="text-xs text-indigo-400 font-bold uppercase tracking-wider">Soal Aktif</span>
+                            <p class="text-lg font-bold text-white leading-relaxed">"${currentQ ? currentQ.questionText : ''}"</p>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">Jawaban Siswa (AI STT / Ketik Manual):</label>
+                                    <button
+                                        onclick="toggleSpeechRecognition()"
+                                        class="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer ${
+                                            isRecording ? 'bg-rose-600 text-white animate-pulse' : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                        }"
+                                    >
+                                        <i data-lucide="${isRecording ? 'mic-off' : 'mic'}" class="w-4 h-4"></i>
+                                        <span>${isRecording ? 'Merekam Suara...' : 'Rekam Suara Siswa'}</span>
+                                    </button>
+                                </div>
+                                <textarea
+                                    rows="2"
+                                    id="student-answer-textarea"
+                                    oninput="studentAnswerInput = this.value; saveData();"
+                                    placeholder="Rekam suara siswa atau ketik jawaban di sini..."
+                                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-indigo-500"
+                                >${studentAnswerInput}</textarea>
+                            </div>
+
+                            ${studentAnswerInput.trim().length > 0 ? `
+                                <div class="p-4 bg-slate-950 border border-indigo-500/40 rounded-xl space-y-3 animate-fadeIn">
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs font-bold text-indigo-300 uppercase">Jawaban Siswa Terisi</span>
+                                        <button
+                                            onclick="showCorrectAnswer = !showCorrectAnswer; renderApp();"
+                                            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-lg shadow-indigo-600/30"
+                                        >
+                                            <i data-lucide="eye" class="w-4 h-4"></i>
+                                            <span>${showCorrectAnswer ? 'Sembunyikan Kunci' : 'Lihat Jawaban Kelompok'}</span>
+                                        </button>
+                                    </div>
+
+                                    ${showCorrectAnswer ? `
+                                        <div class="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-lg space-y-3">
+                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                                <div class="p-3 bg-slate-900/90 rounded border border-slate-800">
+                                                    <span class="text-[11px] text-slate-400 block font-medium uppercase">Jawaban Siswa:</span>
+                                                    <span class="text-slate-100 font-semibold">${studentAnswerInput}</span>
+                                                </div>
+                                                <div class="p-3 bg-indigo-950/90 rounded border border-indigo-500/40">
+                                                    <span class="text-[11px] text-indigo-300 block font-medium uppercase">Kunci Jawaban Kelompok:</span>
+                                                    <span class="text-amber-400 font-bold">${currentQ ? currentQ.correctAnswer : ''}</span>
+                                                </div>
+                                            </div>
+
+                                            <div class="pt-3 border-t border-indigo-500/20 grid grid-cols-2 gap-4">
+                                                <button
+                                                    onclick="handleAnswerDecision(true)"
+                                                    class="py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center space-x-2 cursor-pointer shadow-md"
+                                                >
+                                                    <i data-lucide="check" class="w-4 h-4"></i>
+                                                    <span>Jawaban BENAR (Poin Utuh)</span>
+                                                </button>
+                                                <button
+                                                    onclick="handleAnswerDecision(false)"
+                                                    class="py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs flex items-center justify-center space-x-2 cursor-pointer shadow-md"
+                                                >
+                                                    <i data-lucide="x" class="w-4 h-4"></i>
+                                                    <span>Jawaban SALAH (Potong ${highestBid} Pts)</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'RESULT') {
+                arena.innerHTML = `
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6 text-center">
+                        <div class="inline-flex p-4 rounded-full bg-slate-950 border border-slate-800 mb-2">
+                            <i data-lucide="${evaluationResult && evaluationResult.isCorrect ? 'check-circle-2' : 'x-circle'}" class="w-12 h-12 ${evaluationResult && evaluationResult.isCorrect ? 'text-emerald-400' : 'text-rose-500'}"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold text-white mb-1">
+                                ${evaluationResult && evaluationResult.isCorrect ? 'Hasil Penilaian: BENAR' : 'Hasil Penilaian: SALAH / TIMEOUT'}
+                            </h2>
+                            <p class="text-xs text-slate-400">Penawar: ${bidderTeam ? bidderTeam.name : ''}</p>
+                        </div>
+                        <div class="p-4 rounded-xl border text-left text-xs space-y-2 ${
+                            evaluationResult && evaluationResult.isCorrect ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-200'
+                        }">
+                            <p class="font-semibold">${evaluationResult ? evaluationResult.feedback : ''}</p>
+                        </div>
+                        <div class="pt-4 border-t border-slate-800 flex justify-center">
+                            <button
+                                onclick="resetGameSession()"
+                                class="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2 cursor-pointer"
+                            >
+                                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                                <span>Lanjutkan ke Soal Berikutnya</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
