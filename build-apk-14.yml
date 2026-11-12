@@ -1,0 +1,970 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Siapkan proyek (package.json, config, www, skrip layar kedua)
+        run: |
+          HTML_FILE=$(ls *.html | head -n 1)
+          echo "File HTML yang dipakai: $HTML_FILE"
+          mkdir -p www
+          cp "$HTML_FILE" www/index.html
+
+          cat > package.json <<'JSON'
+          {
+            "name": "kuis-lelang-ai",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.2.0",
+              "@capacitor/core": "^6.2.0",
+              "@capacitor-community/speech-recognition": "^6.0.1"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.2.0"
+            }
+          }
+          JSON
+
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.kuislelang.ai",
+            "appName": "Kuis Lelang AI",
+            "webDir": "www",
+            "android": { "allowMixedContent": true }
+          }
+          JSON
+
+          # Halaman yang tampil di proyektor (layar kedua)
+          cat > www/projector.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id" class="dark">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Proyektor</title>
+            <script src="tailwind.js" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s)"></script>
+            <style>
+              body { font-family: sans-serif; margin: 0; background: #020617; }
+            </style>
+          </head>
+          <body class="bg-slate-950 text-slate-100">
+            <div class="min-h-screen flex flex-col justify-between p-6 sm:p-10">
+              <header class="flex items-center border-b border-slate-800 pb-4">
+                <h1 class="text-xl sm:text-3xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI</h1>
+              </header>
+              <main id="pmain" class="my-auto py-8"></main>
+              <footer id="pfooter" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3"></footer>
+            </div>
+            <script>
+              function setContent(m, f) {
+                document.getElementById('pmain').innerHTML = m;
+                document.getElementById('pfooter').innerHTML = f;
+              }
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Skrip penghubung tablet -> layar proyektor
+          cat > www/second-screen.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var SS = isNative && cap.Plugins ? cap.Plugins.SecondScreen : null;
+            var active = false;
+            var last = '';
+            var origOpen = window.handleOpenProjector;
+            var origRender = window.renderProjectorOverlayContent;
+
+            function setBtn() {
+              var b = document.querySelector('[onclick="handleOpenProjector()"]');
+              if (!b) return;
+              var sp = b.querySelectorAll('span');
+              if (sp[0]) sp[0].textContent = active ? 'Tutup Layar Proyektor' : 'Buka Mode Proyektor';
+              if (sp[1]) sp[1].textContent = active ? 'Tutup' : 'Proyektor';
+            }
+
+            function push() {
+              if (!active || !SS) return;
+              var m = document.getElementById('projector-main-content');
+              var f = document.getElementById('projector-footer-teams');
+              if (!m || !f) return;
+              var key = m.innerHTML + '|' + f.innerHTML;
+              if (key === last) return;
+              last = key;
+              SS.update({ main: m.innerHTML, footer: f.innerHTML }).catch(function () {});
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              origRender();
+              push();
+            };
+
+            window.handleOpenProjector = async function () {
+              if (SS) {
+                if (active) {
+                  try { await SS.hide(); } catch (e) {}
+                  active = false; last = ''; setBtn();
+                  return;
+                }
+                try {
+                  var r = await SS.isAvailable();
+                  if (r && r.available) {
+                    await SS.show();
+                    active = true; last = ''; setBtn(); push();
+                    return;
+                  }
+                } catch (e) {}
+                alert('Layar proyektor tidak terdeteksi. Pastikan kabel HDMI/USB-C tersambung. Memakai mode proyektor di layar tablet.');
+              }
+              origOpen();
+            };
+
+            if (SS) {
+              try {
+                SS.addListener('closed', function () { active = false; last = ''; setBtn(); });
+              } catch (e) {}
+            }
+          })();
+          JS
+
+
+
+          # Web ke-3: halaman proyektor yang dibuka dari perangkat lain lewat Wi-Fi
+          cat > www/projector-web.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id" class="dark">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Arena Lelang Kuis AI - Proyektor</title>
+            <script src="/tailwind.js"></script>
+            <style>
+              body { font-family: sans-serif; margin: 0; background: #020617; }
+              @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+              .animate-fadeIn { animation: fadeIn 0.3s ease-in; }
+            </style>
+          </head>
+          <body class="bg-slate-950 text-slate-100">
+            <div class="min-h-screen flex flex-col justify-between p-6 sm:p-10">
+              <header class="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h1 class="text-xl sm:text-3xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI</h1>
+                <div class="flex items-center gap-3">
+                  <span id="dot" class="inline-block w-3 h-3 rounded-full bg-slate-600"></span>
+                  <span id="status" class="text-xs text-slate-400">Menyambung...</span>
+                  <button onclick="toggleFs()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200">Layar Penuh</button>
+                </div>
+              </header>
+              <main id="pmain" class="my-auto py-8">
+                <p class="text-center text-slate-500 text-lg">Menunggu data dari aplikasi...</p>
+              </main>
+              <footer id="pfooter" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3"></footer>
+            </div>
+            <script>
+              var lastVer = -1, fails = 0;
+              function setStatus(ok) {
+                document.getElementById('dot').className = 'inline-block w-3 h-3 rounded-full ' + (ok ? 'bg-emerald-500' : 'bg-rose-500');
+                document.getElementById('status').textContent = ok ? 'Terhubung' : 'Terputus, mencoba lagi...';
+              }
+              function setContent(m, f) {
+                document.getElementById('pmain').innerHTML = m || '<p class="text-center text-slate-500 text-lg">Menunggu data dari aplikasi...</p>';
+                document.getElementById('pfooter').innerHTML = f || '';
+              }
+              function toggleFs() {
+                if (document.fullscreenElement) { document.exitFullscreen(); }
+                else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+              }
+              async function tick() {
+                try {
+                  var r = await fetch('/state', { cache: 'no-store' });
+                  var d = await r.json();
+                  fails = 0;
+                  setStatus(true);
+                  if (d.ver !== lastVer) {
+                    lastVer = d.ver;
+                    setContent(d.main, d.footer);
+                  }
+                } catch (e) {
+                  fails++;
+                  if (fails > 2) setStatus(false);
+                }
+                setTimeout(tick, 500);
+              }
+              tick();
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Tombol Web Link di dalam aplikasi (menyalakan server dan menampilkan alamat)
+          cat > www/weblink.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var WL = isNative && cap.Plugins ? cap.Plugins.WebLink : null;
+            if (!WL) return;
+
+            var on = false;
+            var url = '';
+            var last = '';
+            var origRender = window.renderProjectorOverlayContent;
+
+            function push() {
+              if (!on) return;
+              var m = document.getElementById('projector-main-content');
+              var f = document.getElementById('projector-footer-teams');
+              if (!m || !f) return;
+              var key = m.innerHTML + '|' + f.innerHTML;
+              if (key === last) return;
+              last = key;
+              WL.update({ main: m.innerHTML, footer: f.innerHTML }).catch(function () {});
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              origRender();
+              push();
+            };
+
+            var btn = document.createElement('button');
+            btn.textContent = 'Web Link';
+            btn.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:9998;padding:10px 16px;border-radius:12px;border:0;background:#4f46e5;color:#fff;font-weight:700;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.5)';
+
+            var panel = document.createElement('div');
+            panel.style.cssText = 'display:none;position:fixed;right:14px;bottom:62px;z-index:9999;width:320px;max-width:calc(100vw - 28px);padding:16px;border-radius:14px;background:#0f172a;border:1px solid #334155;color:#e2e8f0;font-family:sans-serif;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.6)';
+            document.body.appendChild(btn);
+            document.body.appendChild(panel);
+
+            function esc(t) { return String(t).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+            function render() {
+              btn.style.background = on ? '#059669' : '#4f46e5';
+              if (!on) {
+                panel.innerHTML =
+                  '<div style="font-weight:700;margin-bottom:6px">Web Link Proyektor (Wi-Fi)</div>' +
+                  '<div style="color:#94a3b8;margin-bottom:12px">Tampilkan layar proyektor di HP/laptop/TV yang satu Wi-Fi dengan tablet ini.</div>' +
+                  '<button id="wl-start" style="width:100%;padding:10px;border-radius:10px;border:0;background:#4f46e5;color:#fff;font-weight:700">Nyalakan</button>';
+                panel.querySelector('#wl-start').onclick = start;
+              } else {
+                panel.innerHTML =
+                  '<div style="font-weight:700;margin-bottom:6px;color:#34d399">Aktif</div>' +
+                  '<div style="color:#94a3b8;margin-bottom:6px">Buka alamat ini di browser perangkat lain (satu Wi-Fi):</div>' +
+                  '<div style="font-size:18px;font-weight:800;color:#fbbf24;word-break:break-all;margin-bottom:12px">' + esc(url) + '</div>' +
+                  '<button id="wl-stop" style="width:100%;padding:10px;border-radius:10px;border:0;background:#e11d48;color:#fff;font-weight:700">Matikan</button>';
+                panel.querySelector('#wl-stop').onclick = stop;
+              }
+            }
+
+            async function start() {
+              try {
+                var r = await WL.start();
+                if (r && r.url) {
+                  on = true; url = r.url; last = '';
+                  render();
+                  window.renderProjectorOverlayContent();
+                } else {
+                  alert('Alamat Wi-Fi tidak ditemukan. Pastikan tablet tersambung ke Wi-Fi atau hotspot.');
+                }
+              } catch (e) {
+                alert('Gagal menyalakan Web Link: ' + (e && e.message ? e.message : e));
+              }
+            }
+
+            async function stop() {
+              try { await WL.stop(); } catch (e) {}
+              on = false; url = ''; last = '';
+              render();
+            }
+
+            btn.onclick = function () {
+              panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+              render();
+            };
+            render();
+          })();
+          JS
+
+          # Perbaikan: input tidak hilang fokus, tampilan tidak berkedip, suara ke teks
+          cat > www/fixes.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+
+            // 1) Render ulang hanya jika ada perubahan nyata. Tiap detik cukup update angka timer,
+            //    supaya kolom jawaban tidak dibuat ulang (fokus hilang) dan panel tidak berkedip.
+            var origRenderApp = window.renderApp;
+            var lastSig = null;
+            var lastTime = null;
+
+            function makeSig() {
+              try {
+                return JSON.stringify([
+                  activeTab, gameState, activeQuestionId, highestBid, highestBidderId,
+                  bidHistory, isRecording, showCorrectAnswer, teams, questions, evaluationResult,
+                  studentAnswerInput.trim().length > 0,
+                  showCorrectAnswer ? studentAnswerInput : ''
+                ]);
+              } catch (e) { return null; }
+            }
+
+            window.renderApp = function () {
+              var sig = makeSig();
+              if (sig !== null && sig === lastSig && gameState === 'ANSWERING' && timeLeft !== lastTime) {
+                lastTime = timeLeft;
+                document.querySelectorAll('#web2-main-arena .font-mono').forEach(function (el) {
+                  el.textContent = formatTime(timeLeft);
+                });
+                if (typeof renderProjectorOverlayContent === 'function') renderProjectorOverlayContent();
+                return;
+              }
+
+              var ta = document.getElementById('student-answer-textarea');
+              var focusInfo = null;
+              if (ta && document.activeElement === ta) {
+                focusInfo = { s: ta.selectionStart, e: ta.selectionEnd };
+              }
+
+              origRenderApp();
+              lastSig = sig;
+              lastTime = timeLeft;
+
+              if (focusInfo) {
+                var ta2 = document.getElementById('student-answer-textarea');
+                if (ta2) {
+                  ta2.focus();
+                  try { ta2.setSelectionRange(focusInfo.s, focusInfo.e); } catch (e) {}
+                }
+              }
+            };
+
+            // 2) Suara ke teks lewat Android (WebView tidak punya Web Speech API)
+            var SR = isNative && cap.Plugins ? cap.Plugins.SpeechRecognition : null;
+            if (SR) {
+              window.toggleSpeechRecognition = async function () {
+                if (isRecording) {
+                  try { await SR.stop(); } catch (e) {}
+                  isRecording = false;
+                  window.renderApp();
+                  return;
+                }
+                try {
+                  var av = await SR.available();
+                  if (!av || !av.available) {
+                    alert('Layanan suara tidak tersedia di perangkat ini. Pastikan aplikasi Google terpasang dan aktif. Silakan ketik jawaban secara manual.');
+                    return;
+                  }
+                  var perm = await SR.requestPermissions();
+                  if (!perm || perm.speechRecognition !== 'granted') {
+                    alert('Izin mikrofon ditolak. Aktifkan izin mikrofon untuk aplikasi ini di Pengaturan.');
+                    return;
+                  }
+                  isRecording = true;
+                  window.renderApp();
+                  var res = await SR.start({
+                    language: 'id-ID',
+                    maxResults: 1,
+                    prompt: 'Ucapkan jawaban',
+                    partialResults: false,
+                    popup: false
+                  });
+                  var t = res && res.matches && res.matches[0];
+                  if (t) {
+                    studentAnswerInput = studentAnswerInput ? (studentAnswerInput + ' ' + t) : t;
+                    saveData();
+                  }
+                } catch (e) {
+                  alert('Gagal merekam suara: ' + (e && e.message ? e.message : e));
+                }
+                isRecording = false;
+                window.renderApp();
+              };
+            }
+          })();
+          JS
+
+
+          # Web 3: input soal (satuan koin), terhubung langsung dengan data aplikasi
+          cat > www/web3.js <<'JS'
+          (function () {
+            var prevRender = window.renderApp;
+            var built = false;
+            var lastSig3 = null;
+            var ACTIVE = 'px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 bg-indigo-600 text-white shadow-md cursor-pointer';
+            var IDLE = 'px-4 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer';
+            var FIELD = 'w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:ring-2 focus:ring-indigo-500';
+
+            function build() {
+              if (built) return;
+              built = true;
+
+              var host = document.getElementById('btn-tab-web2').parentNode;
+              var b = document.createElement('button');
+              b.id = 'btn-tab-web3';
+              b.className = IDLE;
+              b.setAttribute('onclick', "switchTab('web3')");
+              b.innerHTML = '<i data-lucide="coins" class="w-4 h-4"></i><span>Web 3: Input Soal (Koin)</span>';
+              host.appendChild(b);
+
+              var v = document.createElement('div');
+              v.id = 'view-web3';
+              v.className = 'lg:col-span-12 hidden grid-cols-1 lg:grid-cols-12 gap-6';
+              v.innerHTML = `
+                <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                  <div class="border-b border-slate-800 pb-4">
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i>
+                      <span>Portal Input Soal Kelompok (Koin)</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">
+                      Setiap kelompok dapat memasukkan soal rahasia beserta kunci jawaban. Data langsung masuk ke Dashboard Lelang.
+                    </p>
+                  </div>
+                  <form onsubmit="handleAddQuestionWeb3(event)" class="space-y-4">
+                    <div>
+                      <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Pilih Kelompok Anda:</label>
+                      <select id="web3-team-select" class="${FIELD}"></select>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Pertanyaan Soal:</label>
+                      <textarea id="web3-question-text" rows="3" required placeholder="Tuliskan pertanyaan soal di sini..." class="${FIELD}"></textarea>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Kunci Jawaban Resmi:</label>
+                      <input type="text" id="web3-correct-answer" required placeholder="Kunci jawaban tepat..." class="${FIELD}">
+                    </div>
+                    <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl text-[11px] text-slate-400 flex items-center space-x-2">
+                      <i data-lucide="info" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                      <span>Harga lelang awal soal ditentukan oleh Panitia/Host di Dashboard Lelang (Web 2), dalam satuan koin.</span>
+                    </div>
+                    <button type="submit" class="w-full py-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 cursor-pointer">
+                      <i data-lucide="lock" class="w-4 h-4"></i>
+                      <span>Simpan Soal Secara Rahasia</span>
+                    </button>
+                  </form>
+                </div>
+
+                <div class="lg:col-span-7 space-y-6">
+                  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3 flex items-center space-x-2">
+                      <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i>
+                      <span>Saldo Koin Kelompok</span>
+                    </h2>
+                    <div id="web3-koin-list" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                  </div>
+
+                  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <h2 id="web3-bank-title" class="text-lg font-bold text-white border-b border-slate-800 pb-3">Daftar Bank Soal Rahasia</h2>
+                    <p class="text-xs text-slate-400">
+                      Catatan: Pengelolaan dan penghapusan soal dikontrol penuh melalui Dashboard Web 2 oleh host.
+                    </p>
+                    <div id="web3-questions-list" class="space-y-3 max-h-[500px] overflow-y-auto pr-1"></div>
+                  </div>
+                </div>`;
+              document.querySelector('main').appendChild(v);
+            }
+
+            window.handleAddQuestionWeb3 = function (e) {
+              e.preventDefault();
+              var teamId = document.getElementById('web3-team-select').value;
+              var text = document.getElementById('web3-question-text').value.trim();
+              var answer = document.getElementById('web3-correct-answer').value.trim();
+              if (!teamId || !text || !answer) return;
+
+              questions.push({
+                id: 'q-' + Date.now(),
+                teamId: teamId,
+                questionText: text,
+                correctAnswer: answer,
+                initialBidPrice: 10,
+                status: 'ready'
+              });
+              saveData();
+
+              document.getElementById('web3-question-text').value = '';
+              document.getElementById('web3-correct-answer').value = '';
+              alert('Soal berhasil disimpan secara rahasia!');
+              window.renderApp();
+            };
+
+            function renderWeb3Content() {
+              var select = document.getElementById('web3-team-select');
+              if (select) {
+                var prev = select.value;
+                select.innerHTML = teams.map(function (t) {
+                  return '<option value="' + t.id + '">' + t.name + '</option>';
+                }).join('');
+                if (prev && teams.some(function (t) { return t.id === prev; })) select.value = prev;
+              }
+
+              var koin = document.getElementById('web3-koin-list');
+              if (koin) {
+                koin.innerHTML = teams.slice().sort(function (a, b) { return b.points - a.points; }).map(function (t) {
+                  return `
+                    <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between">
+                      <span class="px-2.5 py-1 rounded font-bold text-white text-xs ${t.color || 'bg-slate-700'}">${t.name}</span>
+                      <span class="text-amber-400 font-extrabold text-sm">${t.points} Koin</span>
+                    </div>`;
+                }).join('');
+              }
+
+              var title = document.getElementById('web3-bank-title');
+              if (title) title.innerText = 'Daftar Bank Soal Rahasia (' + questions.length + ' Soal)';
+
+              var list = document.getElementById('web3-questions-list');
+              if (list) {
+                list.innerHTML = questions.map(function (q) {
+                  var t = teams.find(function (item) { return item.id === q.teamId; });
+                  return `
+                    <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
+                      <div class="flex justify-between items-center text-xs">
+                        <span class="px-2.5 py-1 rounded font-bold text-white ${t ? t.color : 'bg-slate-700'}">${t ? t.name : 'Unknown'}</span>
+                        <span class="text-amber-400 font-bold bg-amber-400/10 px-2.5 py-1 rounded border border-amber-400/20">Status: ${q.status.toUpperCase()}</span>
+                      </div>
+                      <p class="text-xs text-slate-400 font-mono italic">" Soal Disembunyikan (••••••••) "</p>
+                    </div>`;
+                }).join('');
+              }
+
+              if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+            }
+
+            window.renderApp = function () {
+              prevRender();
+              build();
+
+              var v1 = document.getElementById('view-web1');
+              var v2 = document.getElementById('view-web2');
+              var v3 = document.getElementById('view-web3');
+              var b1 = document.getElementById('btn-tab-web1');
+              var b2 = document.getElementById('btn-tab-web2');
+              var b3 = document.getElementById('btn-tab-web3');
+
+              if (activeTab === 'web3') {
+                v1.classList.add('hidden'); v1.classList.remove('grid');
+                v2.classList.add('hidden'); v2.classList.remove('grid');
+                v3.classList.remove('hidden'); v3.classList.add('grid');
+                b1.className = IDLE; b2.className = IDLE; b3.className = ACTIVE;
+              } else {
+                v3.classList.add('hidden'); v3.classList.remove('grid');
+                b3.className = IDLE;
+                return;
+              }
+
+              var sig = JSON.stringify([teams, questions]);
+              if (sig === lastSig3) return;
+              lastSig3 = sig;
+              renderWeb3Content();
+            };
+
+            build();
+          })();
+          JS
+
+
+          # Layar proyektor: tampilkan jawaban yang diketik operator, lalu jawaban kedua kelompok
+          cat > www/answers.js <<'JS'
+          (function () {
+            var orig = window.renderProjectorOverlayContent;
+
+            function esc(t) {
+              return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+              });
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              orig();
+              if (gameState !== 'ANSWERING') return;
+              var main = document.getElementById('projector-main-content');
+              if (!main || !main.firstElementChild) return;
+
+              var q = questions.find(function (x) { return x.id === activeQuestionId; });
+              var author = q ? teams.find(function (t) { return t.id === q.teamId; }) : null;
+              var bidder = highestBidderId ? teams.find(function (t) { return t.id === highestBidderId; }) : null;
+              var bidderName = bidder ? bidder.name : 'Kelompok Penjawab';
+              var authorName = author ? author.name : 'Pembuat Soal';
+              var typed = (studentAnswerInput || '').trim();
+              var typedHtml = typed ? esc(typed) : '<span class="text-slate-500">Menunggu jawaban...</span>';
+
+              var html;
+              if (showCorrectAnswer) {
+                html =
+                  '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+                    '<div class="p-6 bg-slate-950 border border-emerald-500/40 rounded-2xl space-y-2">' +
+                      '<span class="text-xs font-bold text-emerald-400 uppercase block">Jawaban Kelompok ' + esc(bidderName) + ' (Penjawab)</span>' +
+                      '<p class="text-xl sm:text-3xl font-bold text-white leading-relaxed">' + typedHtml + '</p>' +
+                    '</div>' +
+                    '<div class="p-6 bg-indigo-950/60 border border-amber-400/40 rounded-2xl space-y-2">' +
+                      '<span class="text-xs font-bold text-amber-400 uppercase block">Jawaban Kelompok ' + esc(authorName) + ' (Pembuat Soal)</span>' +
+                      '<p class="text-xl sm:text-3xl font-bold text-amber-300 leading-relaxed">' + esc(q ? q.correctAnswer : '') + '</p>' +
+                    '</div>' +
+                  '</div>';
+              } else {
+                html =
+                  '<div class="p-6 bg-slate-950 border border-emerald-500/40 rounded-2xl space-y-2">' +
+                    '<span class="text-xs font-bold text-emerald-400 uppercase block">Jawaban Kelompok ' + esc(bidderName) + ' (sedang diketik)</span>' +
+                    '<p class="text-xl sm:text-3xl font-bold text-white leading-relaxed">' + typedHtml + '</p>' +
+                  '</div>';
+              }
+              main.firstElementChild.insertAdjacentHTML('beforeend', html);
+            };
+
+            // Perbarui proyektor setiap kali operator mengetik (tanpa membuat ulang kolom jawaban)
+            document.addEventListener('input', function (e) {
+              if (e.target && e.target.id === 'student-answer-textarea') {
+                window.renderProjectorOverlayContent();
+              }
+            });
+          })();
+          JS
+
+          sed -i 's#</body>#<script src="answers.js"></script><script src="second-screen.js"></script><script src="weblink.js"></script><script src="fixes.js"></script><script src="web3.js"></script></body>#' www/index.html
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bundle library supaya bisa offline (Tailwind dan Lucide)
+        run: |
+          cd www
+          if curl -fsSL "https://cdn.tailwindcss.com/3.4.17" -o tailwind.js; then
+            sed -i 's#https://cdn.tailwindcss.com#tailwind.js#' index.html
+          fi
+          if curl -fsSL "https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" -o lucide.min.js; then
+            sed -i 's#https://unpkg.com/lucide@latest#lucide.min.js#' index.html
+          fi
+          sed -i '/fonts.googleapis.com/d' index.html
+
+      - name: Ganti istilah Poin menjadi Koin di seluruh aplikasi
+        run: |
+          sed -i -E 's/\bPoin\b/Koin/g; s/\bpoin\b/koin/g; s/\bPOIN\b/KOIN/g; s/\bPts\b/Koin/g; s/\bpts\b/koin/g' www/index.html
+          grep -n -i -E '\bpoin\b|\bpts\b' www/index.html || echo "Tidak ada sisa istilah Poin"
+
+      - name: Tambah platform Android
+        run: npx cap add android
+
+      - name: Tambah kode native layar kedua (HDMI / USB-C)
+        run: |
+          DIR=android/app/src/main/java/com/kuislelang/ai
+          mkdir -p $DIR
+
+          cat > $DIR/MainActivity.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(SecondScreenPlugin.class);
+                  registerPlugin(WebLinkPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA
+
+          cat > $DIR/SecondScreenPlugin.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.app.Presentation;
+          import android.content.Context;
+          import android.hardware.display.DisplayManager;
+          import android.os.Bundle;
+          import android.view.Display;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "SecondScreen")
+          public class SecondScreenPlugin extends Plugin {
+              private Presentation presentation;
+              private WebView projectorWeb;
+              private boolean loaded = false;
+              private String pendingMain = "";
+              private String pendingFooter = "";
+
+              private Display findDisplay() {
+                  DisplayManager dm = (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
+                  Display[] ds = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+                  if (ds != null && ds.length > 0) return ds[0];
+                  Display[] all = dm.getDisplays();
+                  for (Display d : all) {
+                      if (d.getDisplayId() != Display.DEFAULT_DISPLAY) return d;
+                  }
+                  return null;
+              }
+
+              private void pushNow() {
+                  if (projectorWeb != null && loaded) {
+                      String js = "setContent(" + JSONObject.quote(pendingMain) + "," + JSONObject.quote(pendingFooter) + ");";
+                      projectorWeb.evaluateJavascript(js, null);
+                  }
+              }
+
+              @PluginMethod
+              public void isAvailable(PluginCall call) {
+                  JSObject r = new JSObject();
+                  r.put("available", findDisplay() != null);
+                  call.resolve(r);
+              }
+
+              @PluginMethod
+              public void show(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          if (presentation != null && presentation.isShowing()) {
+                              call.resolve();
+                              return;
+                          }
+                          Display d = findDisplay();
+                          if (d == null) {
+                              call.reject("Tidak ada layar kedua");
+                              return;
+                          }
+                          loaded = false;
+                          presentation = new ProjectorPresentation(getActivity(), d);
+                          presentation.setOnDismissListener(dialog -> {
+                              presentation = null;
+                              projectorWeb = null;
+                              loaded = false;
+                              notifyListeners("closed", new JSObject());
+                          });
+                          presentation.show();
+                          call.resolve();
+                      } catch (Exception e) {
+                          call.reject(String.valueOf(e.getMessage()));
+                      }
+                  });
+              }
+
+              @PluginMethod
+              public void update(final PluginCall call) {
+                  pendingMain = call.getString("main", "");
+                  pendingFooter = call.getString("footer", "");
+                  getActivity().runOnUiThread(() -> pushNow());
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void hide(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (presentation != null) presentation.dismiss();
+                      call.resolve();
+                  });
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  if (presentation != null) presentation.dismiss();
+                  super.handleOnDestroy();
+              }
+
+              private class ProjectorPresentation extends Presentation {
+                  ProjectorPresentation(Context ctx, Display display) {
+                      super(ctx, display);
+                  }
+
+                  @Override
+                  protected void onCreate(Bundle savedInstanceState) {
+                      super.onCreate(savedInstanceState);
+                      projectorWeb = new WebView(getContext());
+                      projectorWeb.setBackgroundColor(0xFF020617);
+                      WebSettings s = projectorWeb.getSettings();
+                      s.setJavaScriptEnabled(true);
+                      s.setDomStorageEnabled(true);
+                      projectorWeb.setWebViewClient(new WebViewClient() {
+                          @Override
+                          public void onPageFinished(WebView view, String url) {
+                              loaded = true;
+                              pushNow();
+                          }
+                      });
+                      setContentView(projectorWeb);
+                      projectorWeb.loadUrl("file:///android_asset/public/projector.html");
+                  }
+              }
+          }
+          JAVA
+
+          cat > $DIR/WebLinkPlugin.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import fi.iki.elonen.NanoHTTPD;
+          import java.io.InputStream;
+          import java.net.Inet4Address;
+          import java.net.InetAddress;
+          import java.net.NetworkInterface;
+          import java.util.Collections;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "WebLink")
+          public class WebLinkPlugin extends Plugin {
+              private LinkServer server;
+              private int port = 8080;
+              private volatile String main = "";
+              private volatile String footer = "";
+              private volatile long ver = 0;
+
+              private String findIp() {
+                  try {
+                      for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                          if (!ni.isUp() || ni.isLoopback()) continue;
+                          for (InetAddress a : Collections.list(ni.getInetAddresses())) {
+                              if (a instanceof Inet4Address && a.isSiteLocalAddress()) {
+                                  return a.getHostAddress();
+                              }
+                          }
+                      }
+                  } catch (Exception e) {
+                  }
+                  return null;
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  try {
+                      if (server == null) {
+                          Exception last = null;
+                          for (int p = 8080; p <= 8090; p++) {
+                              try {
+                                  LinkServer s = new LinkServer(p);
+                                  s.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
+                                  server = s;
+                                  port = p;
+                                  break;
+                              } catch (Exception e) {
+                                  last = e;
+                              }
+                          }
+                          if (server == null) {
+                              call.reject("Server gagal dinyalakan: " + (last != null ? last.getMessage() : ""));
+                              return;
+                          }
+                      }
+                      String ip = findIp();
+                      JSObject r = new JSObject();
+                      if (ip != null) {
+                          r.put("url", "http://" + ip + ":" + port);
+                      }
+                      call.resolve(r);
+                  } catch (Exception e) {
+                      call.reject(String.valueOf(e.getMessage()));
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  if (server != null) {
+                      server.stop();
+                      server = null;
+                  }
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void update(PluginCall call) {
+                  main = call.getString("main", "");
+                  footer = call.getString("footer", "");
+                  ver++;
+                  call.resolve();
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  if (server != null) {
+                      server.stop();
+                      server = null;
+                  }
+                  super.handleOnDestroy();
+              }
+
+              private class LinkServer extends NanoHTTPD {
+                  LinkServer(int p) {
+                      super(p);
+                  }
+
+                  @Override
+                  public Response serve(IHTTPSession session) {
+                      String uri = session.getUri();
+                      try {
+                          if (uri.equals("/state")) {
+                              JSONObject o = new JSONObject();
+                              o.put("ver", ver);
+                              o.put("main", main);
+                              o.put("footer", footer);
+                              Response r = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", o.toString());
+                              r.addHeader("Cache-Control", "no-store");
+                              return r;
+                          }
+                          String asset = null;
+                          String mime = null;
+                          if (uri.equals("/") || uri.equals("/index.html")) {
+                              asset = "public/projector-web.html";
+                              mime = "text/html; charset=utf-8";
+                          } else if (uri.equals("/tailwind.js")) {
+                              asset = "public/tailwind.js";
+                              mime = "application/javascript; charset=utf-8";
+                          }
+                          if (asset != null) {
+                              InputStream is = getContext().getAssets().open(asset);
+                              return newChunkedResponse(Response.Status.OK, mime, is);
+                          }
+                      } catch (Exception e) {
+                          return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Tidak ditemukan");
+                      }
+                      return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404");
+                  }
+              }
+          }
+          JAVA
+
+      - name: Izin mikrofon dan layanan suara di AndroidManifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" /><queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries><application#' $MANIFEST
+          grep -c RECORD_AUDIO $MANIFEST
+          sed -i '/^dependencies {/a\    implementation "org.nanohttpd:nanohttpd:2.3.1"' android/app/build.gradle
+          grep -n nanohttpd android/app/build.gradle
+
+      - name: Sinkronisasi aset web ke Android
+        run: npx cap sync android
+
+      - name: Build APK debug
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kuis-Lelang-AI-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
