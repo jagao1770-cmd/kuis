@@ -1,0 +1,1373 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Siapkan proyek (package.json, config, www, skrip layar kedua)
+        run: |
+          HTML_FILE=$(ls *.html | head -n 1)
+          echo "File HTML yang dipakai: $HTML_FILE"
+          mkdir -p www
+          cp "$HTML_FILE" www/index.html
+
+          cat > package.json <<'JSON'
+          {
+            "name": "kuis-lelang-ai",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.2.0",
+              "@capacitor/core": "^6.2.0",
+              "@capacitor-community/speech-recognition": "^6.0.1"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.2.0"
+            }
+          }
+          JSON
+
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.kuislelang.ai",
+            "appName": "Kuis Lelang AI",
+            "webDir": "www",
+            "android": { "allowMixedContent": true }
+          }
+          JSON
+
+          # Halaman yang tampil di proyektor (layar kedua)
+          cat > www/projector.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id" class="dark">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Proyektor</title>
+            <script src="tailwind.js" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s)"></script>
+            <style>
+              body { font-family: sans-serif; margin: 0; background: #020617; }
+            </style>
+          </head>
+          <body class="bg-slate-950 text-slate-100">
+            <div class="min-h-screen flex flex-col justify-between p-6 sm:p-10">
+              <header class="flex items-center border-b border-slate-800 pb-4">
+                <h1 class="text-xl sm:text-3xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI</h1>
+              </header>
+              <main id="pmain" class="my-auto py-8"></main>
+              <footer id="pfooter" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3"></footer>
+            </div>
+            <script>
+              function setContent(m, f) {
+                document.getElementById('pmain').innerHTML = m;
+                document.getElementById('pfooter').innerHTML = f;
+              }
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Skrip penghubung tablet -> layar proyektor
+          cat > www/second-screen.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var SS = isNative && cap.Plugins ? cap.Plugins.SecondScreen : null;
+            var active = false;
+            var last = '';
+            var origOpen = window.handleOpenProjector;
+            var origRender = window.renderProjectorOverlayContent;
+
+            function setBtn() {
+              var b = document.querySelector('[onclick="handleOpenProjector()"]');
+              if (!b) return;
+              var sp = b.querySelectorAll('span');
+              if (sp[0]) sp[0].textContent = active ? 'Tutup Layar Proyektor' : 'Buka Mode Proyektor';
+              if (sp[1]) sp[1].textContent = active ? 'Tutup' : 'Proyektor';
+            }
+
+            function push() {
+              if (!active || !SS) return;
+              var m = document.getElementById('projector-main-content');
+              var f = document.getElementById('projector-footer-teams');
+              if (!m || !f) return;
+              var key = m.innerHTML + '|' + f.innerHTML;
+              if (key === last) return;
+              last = key;
+              SS.update({ main: m.innerHTML, footer: f.innerHTML }).catch(function () {});
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              origRender();
+              push();
+            };
+
+            window.handleOpenProjector = async function () {
+              if (SS) {
+                if (active) {
+                  try { await SS.hide(); } catch (e) {}
+                  active = false; last = ''; setBtn();
+                  return;
+                }
+                try {
+                  var r = await SS.isAvailable();
+                  if (r && r.available) {
+                    await SS.show();
+                    active = true; last = ''; setBtn(); push();
+                    return;
+                  }
+                } catch (e) {}
+                alert('Layar proyektor tidak terdeteksi. Pastikan kabel HDMI/USB-C tersambung. Memakai mode proyektor di layar tablet.');
+              }
+              origOpen();
+            };
+
+            if (SS) {
+              try {
+                SS.addListener('closed', function () { active = false; last = ''; setBtn(); });
+              } catch (e) {}
+            }
+          })();
+          JS
+
+
+
+          # Web ke-3: halaman proyektor yang dibuka dari perangkat lain lewat Wi-Fi
+          cat > www/projector-web.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id" class="dark">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Arena Lelang Kuis AI - Proyektor</title>
+            <script src="/tailwind.js"></script>
+            <style>
+              body { font-family: sans-serif; margin: 0; background: #020617; }
+              @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+              .animate-fadeIn { animation: fadeIn 0.3s ease-in; }
+            </style>
+          </head>
+          <body class="bg-slate-950 text-slate-100">
+            <div class="min-h-screen flex flex-col justify-between p-6 sm:p-10">
+              <header class="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h1 class="text-xl sm:text-3xl font-black text-indigo-400 tracking-wider">ARENA LELANG KUIS AI</h1>
+                <div class="flex items-center gap-3">
+                  <span id="dot" class="inline-block w-3 h-3 rounded-full bg-slate-600"></span>
+                  <span id="status" class="text-xs text-slate-400">Menyambung...</span>
+                  <button onclick="toggleFs()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200">Layar Penuh</button>
+                </div>
+              </header>
+              <main id="pmain" class="my-auto py-8">
+                <p class="text-center text-slate-500 text-lg">Menunggu data dari aplikasi...</p>
+              </main>
+              <footer id="pfooter" class="border-t border-slate-800 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3"></footer>
+            </div>
+            <script>
+              var lastVer = -1, fails = 0;
+              function setStatus(ok) {
+                document.getElementById('dot').className = 'inline-block w-3 h-3 rounded-full ' + (ok ? 'bg-emerald-500' : 'bg-rose-500');
+                document.getElementById('status').textContent = ok ? 'Terhubung' : 'Terputus, mencoba lagi...';
+              }
+              function setContent(m, f) {
+                document.getElementById('pmain').innerHTML = m || '<p class="text-center text-slate-500 text-lg">Menunggu data dari aplikasi...</p>';
+                document.getElementById('pfooter').innerHTML = f || '';
+              }
+              function toggleFs() {
+                if (document.fullscreenElement) { document.exitFullscreen(); }
+                else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+              }
+              async function tick() {
+                try {
+                  var r = await fetch('/state', { cache: 'no-store' });
+                  var d = await r.json();
+                  fails = 0;
+                  setStatus(true);
+                  if (d.ver !== lastVer) {
+                    lastVer = d.ver;
+                    setContent(d.main, d.footer);
+                  }
+                } catch (e) {
+                  fails++;
+                  if (fails > 2) setStatus(false);
+                }
+                setTimeout(tick, 500);
+              }
+              tick();
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Tombol Web Link di dalam aplikasi (menyalakan server dan menampilkan alamat)
+          cat > www/weblink.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var WL = isNative && cap.Plugins ? cap.Plugins.WebLink : null;
+            if (!WL) return;
+
+            var on = false;
+            var url = '';
+            var last = '';
+            var origRender = window.renderProjectorOverlayContent;
+
+            function push() {
+              if (!on) return;
+              var m = document.getElementById('projector-main-content');
+              var f = document.getElementById('projector-footer-teams');
+              if (!m || !f) return;
+              var key = m.innerHTML + '|' + f.innerHTML;
+              if (key === last) return;
+              last = key;
+              WL.update({ main: m.innerHTML, footer: f.innerHTML }).catch(function () {});
+            }
+
+            window.renderProjectorOverlayContent = function () {
+              origRender();
+              push();
+            };
+
+            var btn = document.createElement('button');
+            btn.textContent = 'Web Link';
+            btn.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:9998;padding:10px 16px;border-radius:12px;border:0;background:#4f46e5;color:#fff;font-weight:700;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.5)';
+
+            var panel = document.createElement('div');
+            panel.style.cssText = 'display:none;position:fixed;right:14px;bottom:62px;z-index:9999;width:320px;max-width:calc(100vw - 28px);padding:16px;border-radius:14px;background:#0f172a;border:1px solid #334155;color:#e2e8f0;font-family:sans-serif;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.6)';
+            document.body.appendChild(btn);
+            document.body.appendChild(panel);
+
+            function esc(t) { return String(t).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+            function render() {
+              btn.style.background = on ? '#059669' : '#4f46e5';
+              if (!on) {
+                panel.innerHTML =
+                  '<div style="font-weight:700;margin-bottom:6px">Web Link Proyektor (Wi-Fi)</div>' +
+                  '<div style="color:#94a3b8;margin-bottom:12px">Tampilkan layar proyektor dan buka Web 3 (input soal) dari HP/laptop yang satu Wi-Fi dengan tablet ini.</div>' +
+                  '<button id="wl-start" style="width:100%;padding:10px;border-radius:10px;border:0;background:#4f46e5;color:#fff;font-weight:700">Nyalakan</button>';
+                panel.querySelector('#wl-start').onclick = start;
+              } else {
+                panel.innerHTML =
+                  '<div style="font-weight:700;margin-bottom:6px;color:#34d399">Aktif</div>' +
+                  '<div style="color:#94a3b8;margin-bottom:6px">Buka alamat ini di browser perangkat lain (satu Wi-Fi):</div>' +
+                  '<div style="font-size:18px;font-weight:800;color:#fbbf24;word-break:break-all;margin-bottom:12px">' + esc(url) + '</div>' +
+                  '<div style="color:#94a3b8;margin-bottom:6px">Web 3 (input soal kelompok):</div>' +
+                  '<div style="font-size:16px;font-weight:800;color:#a5b4fc;word-break:break-all;margin-bottom:12px">' + esc(url) + '/web3</div>' +
+                  '<button id="wl-stop" style="width:100%;padding:10px;border-radius:10px;border:0;background:#e11d48;color:#fff;font-weight:700">Matikan</button>';
+                panel.querySelector('#wl-stop').onclick = stop;
+              }
+            }
+
+            async function start() {
+              try {
+                var r = await WL.start();
+                if (r && r.url) {
+                  on = true; url = r.url; last = '';
+                  render();
+                  window.renderProjectorOverlayContent();
+                } else {
+                  alert('Alamat Wi-Fi tidak ditemukan. Pastikan tablet tersambung ke Wi-Fi atau hotspot.');
+                }
+              } catch (e) {
+                alert('Gagal menyalakan Web Link: ' + (e && e.message ? e.message : e));
+              }
+            }
+
+            async function stop() {
+              try { await WL.stop(); } catch (e) {}
+              on = false; url = ''; last = '';
+              render();
+            }
+
+            btn.onclick = function () {
+              panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+              render();
+            };
+            render();
+          })();
+          JS
+
+          # Perbaikan: input tidak hilang fokus, tampilan tidak berkedip, suara ke teks
+          cat > www/fixes.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+
+            // 1) Render ulang hanya jika ada perubahan nyata. Tiap detik cukup update angka timer,
+            //    supaya kolom jawaban tidak dibuat ulang (fokus hilang) dan panel tidak berkedip.
+            var origRenderApp = window.renderApp;
+            var lastSig = null;
+            var lastTime = null;
+
+            function makeSig() {
+              try {
+                return JSON.stringify([
+                  activeTab, gameState, activeQuestionId, highestBid, highestBidderId,
+                  bidHistory, isRecording, teams, questions, evaluationResult
+                ]);
+              } catch (e) { return null; }
+            }
+
+            window.renderApp = function () {
+              var sig = makeSig();
+              if (sig !== null && sig === lastSig && gameState === 'ANSWERING' && timeLeft !== lastTime) {
+                lastTime = timeLeft;
+                document.querySelectorAll('#web2-main-arena .font-mono').forEach(function (el) {
+                  el.textContent = formatTime(timeLeft);
+                });
+                if (typeof renderProjectorOverlayContent === 'function') renderProjectorOverlayContent();
+                return;
+              }
+
+              var ta = document.getElementById('student-answer-textarea');
+              var focusInfo = null;
+              if (ta && document.activeElement === ta) {
+                focusInfo = { s: ta.selectionStart, e: ta.selectionEnd };
+              }
+
+              origRenderApp();
+              lastSig = sig;
+              lastTime = timeLeft;
+
+              if (focusInfo) {
+                var ta2 = document.getElementById('student-answer-textarea');
+                if (ta2) {
+                  ta2.focus();
+                  try { ta2.setSelectionRange(focusInfo.s, focusInfo.e); } catch (e) {}
+                }
+              }
+            };
+
+            // 2) Suara ke teks lewat Android (WebView tidak punya Web Speech API)
+            var SR = isNative && cap.Plugins ? cap.Plugins.SpeechRecognition : null;
+            if (SR) {
+              window.toggleSpeechRecognition = async function () {
+                if (isRecording) {
+                  try { await SR.stop(); } catch (e) {}
+                  isRecording = false;
+                  window.renderApp();
+                  return;
+                }
+                try {
+                  var av = await SR.available();
+                  if (!av || !av.available) {
+                    alert('Layanan suara tidak tersedia di perangkat ini. Pastikan aplikasi Google terpasang dan aktif. Silakan ketik jawaban secara manual.');
+                    return;
+                  }
+                  var perm = await SR.requestPermissions();
+                  if (!perm || perm.speechRecognition !== 'granted') {
+                    alert('Izin mikrofon ditolak. Aktifkan izin mikrofon untuk aplikasi ini di Pengaturan.');
+                    return;
+                  }
+                  isRecording = true;
+                  window.renderApp();
+                  var res = await SR.start({
+                    language: 'id-ID',
+                    maxResults: 1,
+                    prompt: 'Ucapkan jawaban',
+                    partialResults: false,
+                    popup: false
+                  });
+                  var t = res && res.matches && res.matches[0];
+                  if (t) {
+                    studentAnswerInput = studentAnswerInput ? (studentAnswerInput + ' ' + t) : t;
+                    saveData();
+                  }
+                } catch (e) {
+                  alert('Gagal merekam suara: ' + (e && e.message ? e.message : e));
+                }
+                isRecording = false;
+                window.renderApp();
+              };
+            }
+          })();
+          JS
+
+
+          # Layar proyektor: tampilkan jawaban yang diketik operator, lalu jawaban kedua kelompok
+          cat > www/answers.js <<'JS'
+          (function () {
+            var orig = window.renderProjectorOverlayContent;
+
+            function esc(t) {
+              return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+              });
+            }
+
+            function esc2(t) { return esc(t); }
+
+            window.resultKind = function () {
+              if (!evaluationResult) return null;
+              if (evaluationResult.isCorrect) return 'correct';
+              return /Kehabisan Waktu/i.test(evaluationResult.feedback || '') ? 'timeout' : 'wrong';
+            };
+
+            function showResult() {
+              var main = document.getElementById('projector-main-content');
+              if (!main) return;
+              var kind = window.resultKind();
+              var cfg = {
+                correct: { title: 'JAWABAN BENAR!', c1: '#059669', c2: '#34d399', glow: 'rgba(16,185,129,.55)', anim: 'kpop' },
+                wrong: { title: 'JAWABAN SALAH!', c1: '#be123c', c2: '#fb7185', glow: 'rgba(225,29,72,.55)', anim: 'kshake' },
+                timeout: { title: 'WAKTU HABIS!', c1: '#d97706', c2: '#fbbf24', glow: 'rgba(245,158,11,.55)', anim: 'kring' }
+              }[kind];
+              if (!cfg) return;
+
+              var paths = {
+                correct: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+                wrong: '<path d="M6 6l12 12M18 6L6 18"/>',
+                timeout: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 3h6M12 3v2"/>'
+              };
+              var icon = '<svg viewBox="0 0 24 24" width="96" height="96" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' + paths[kind] + '</svg>';
+
+              var confetti = '';
+              if (kind === 'correct') {
+                var cols = ['#34d399', '#fbbf24', '#60a5fa', '#f472b6', '#a78bfa', '#f87171'];
+                for (var i = 0; i < 26; i++) {
+                  confetti += '<span style="position:absolute;top:-20px;left:' + ((i * 37) % 100) + '%;width:10px;height:16px;border-radius:2px;background:' +
+                    cols[i % cols.length] + ';opacity:0;animation:kfall ' + (2.2 + (i % 5) * 0.35) + 's linear ' + ((i % 9) * 0.2) + 's infinite"></span>';
+                }
+              }
+              var flash = kind === 'wrong'
+                ? '<div style="position:absolute;inset:0;background:#e11d48;opacity:0;animation:kflash .6s ease-out 2"></div>'
+                : '';
+              var rings = '';
+              for (var r = 0; r < 3; r++) {
+                rings += '<span style="position:absolute;width:170px;height:170px;border-radius:50%;border:4px solid ' + cfg.c2 +
+                  ';opacity:0;animation:kripple 1.8s ease-out ' + (r * 0.6) + 's infinite"></span>';
+              }
+
+              var css = '<style>' +
+                '@keyframes kpop{0%{transform:scale(0) rotate(-25deg);opacity:0}60%{transform:scale(1.25) rotate(6deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}' +
+                '@keyframes kshake{0%{transform:scale(0);opacity:0}35%{transform:scale(1.2);opacity:1}50%{transform:translateX(-22px)}60%{transform:translateX(22px)}70%{transform:translateX(-16px)}80%{transform:translateX(16px)}90%{transform:translateX(-8px)}100%{transform:translateX(0) scale(1);opacity:1}}' +
+                '@keyframes kring{0%{transform:scale(0);opacity:0}30%{transform:scale(1.2);opacity:1}40%{transform:scale(1) rotate(-14deg)}50%{transform:rotate(14deg)}60%{transform:rotate(-14deg)}70%{transform:rotate(14deg)}80%{transform:rotate(-8deg)}90%{transform:rotate(8deg)}100%{transform:rotate(0);opacity:1}}' +
+                '@keyframes kripple{0%{transform:scale(.7);opacity:.8}100%{transform:scale(2.4);opacity:0}}' +
+                '@keyframes kfall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(460px) rotate(560deg);opacity:0}}' +
+                '@keyframes kflash{0%{opacity:0}25%{opacity:.55}100%{opacity:0}}' +
+                '@keyframes kfade{0%{opacity:0;transform:translateY(24px)}100%{opacity:1;transform:translateY(0)}}' +
+                '@keyframes kpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}' +
+                '</style>';
+
+              main.innerHTML = css +
+                '<div style="position:relative;overflow:hidden;max-width:880px;margin:0 auto;padding:40px 24px 36px;border-radius:28px;text-align:center;' +
+                'background:radial-gradient(circle at 50% 30%,' + cfg.glow + ',#0f172a 70%);border:2px solid ' + cfg.c2 + ';">' +
+                  confetti + flash +
+                  '<div style="position:relative;display:flex;align-items:center;justify-content:center;height:190px;">' + rings +
+                    '<div style="position:relative;width:170px;height:170px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+                    'background:linear-gradient(135deg,' + cfg.c1 + ',' + cfg.c2 + ');box-shadow:0 0 60px ' + cfg.glow + ';animation:' + cfg.anim + ' .9s ease-out both;">' + icon + '</div>' +
+                  '</div>' +
+                  '<h2 style="margin:18px 0 8px;font-size:clamp(32px,6vw,64px);font-weight:900;color:#fff;letter-spacing:1px;opacity:0;animation:kfade .6s ease-out .5s both,kpulse 1.4s ease-in-out 1.2s infinite;">' + cfg.title + '</h2>' +
+                  '<p style="margin:0;font-size:clamp(16px,2.4vw,26px);font-weight:600;color:#e2e8f0;opacity:0;animation:kfade .6s ease-out .8s both;">' + esc(evaluationResult.feedback || '') + '</p>' +
+                '</div>';
+            }
+
+
+
+            window.renderProjectorOverlayContent = function () {
+              orig();
+              if (gameState === 'RESULT' && evaluationResult) {
+                showResult();
+                if (window.resultKind() !== 'correct') {
+                  var rm = document.getElementById('projector-main-content');
+                  var rq = questions.find(function (x) { return x.id === activeQuestionId; });
+                  var ra = rq ? teams.find(function (t) { return t.id === rq.teamId; }) : null;
+                  var rb = highestBidderId ? teams.find(function (t) { return t.id === highestBidderId; }) : null;
+                  var rt = (studentAnswerInput || '').trim();
+                  if (rm) {
+                    rm.insertAdjacentHTML('beforeend',
+                      '<div style="max-width:880px;margin:20px auto 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;text-align:left;opacity:0;animation:kfade .7s ease-out 1.2s both">' +
+                        '<div style="padding:22px;border-radius:18px;background:#020617;border:2px solid rgba(16,185,129,.45)">' +
+                          '<div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#34d399;margin-bottom:8px">Jawaban Kelompok ' + esc(rb ? rb.name : 'Penjawab') + ' (Penjawab)</div>' +
+                          '<div style="font-size:28px;font-weight:800;color:#fff;line-height:1.4">' + (rt ? esc(rt) : '<span style="color:#64748b">(tidak ada jawaban)</span>') + '</div>' +
+                        '</div>' +
+                        '<div style="padding:22px;border-radius:18px;background:rgba(49,46,129,.45);border:2px solid rgba(251,191,36,.5)">' +
+                          '<div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#fbbf24;margin-bottom:8px">Jawaban Kelompok ' + esc(ra ? ra.name : 'Pembuat Soal') + ' (Pembuat Soal)</div>' +
+                          '<div style="font-size:28px;font-weight:800;color:#fcd34d;line-height:1.4">' + esc(rq ? rq.correctAnswer : '') + '</div>' +
+                        '</div>' +
+                      '</div>');
+                  }
+                }
+                return;
+              }
+              if (gameState !== 'ANSWERING') return;
+              var main = document.getElementById('projector-main-content');
+              if (!main || !main.firstElementChild) return;
+
+              var q = questions.find(function (x) { return x.id === activeQuestionId; });
+              var author = q ? teams.find(function (t) { return t.id === q.teamId; }) : null;
+              var bidder = highestBidderId ? teams.find(function (t) { return t.id === highestBidderId; }) : null;
+              var bidderName = bidder ? bidder.name : 'Kelompok Penjawab';
+              var authorName = author ? author.name : 'Pembuat Soal';
+              var typed = (studentAnswerInput || '').trim();
+              var typedHtml = typed ? esc(typed) : '<span class="text-slate-500">Menunggu jawaban...</span>';
+
+              var html;
+              if (showCorrectAnswer) {
+                html =
+                  '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+                    '<div class="p-6 bg-slate-950 border border-emerald-500/40 rounded-2xl space-y-2">' +
+                      '<span class="text-xs font-bold text-emerald-400 uppercase block">Jawaban Kelompok ' + esc(bidderName) + ' (Penjawab)</span>' +
+                      '<p class="text-xl sm:text-3xl font-bold text-white leading-relaxed">' + typedHtml + '</p>' +
+                    '</div>' +
+                    '<div class="p-6 bg-indigo-950/60 border border-amber-400/40 rounded-2xl space-y-2">' +
+                      '<span class="text-xs font-bold text-amber-400 uppercase block">Jawaban Kelompok ' + esc(authorName) + ' (Pembuat Soal)</span>' +
+                      '<p class="text-xl sm:text-3xl font-bold text-amber-300 leading-relaxed">' + esc(q ? q.correctAnswer : '') + '</p>' +
+                    '</div>' +
+                  '</div>';
+              } else {
+                html =
+                  '<div class="p-6 bg-slate-950 border border-emerald-500/40 rounded-2xl space-y-2">' +
+                    '<span class="text-xs font-bold text-emerald-400 uppercase block">Jawaban Kelompok ' + esc(bidderName) + ' (sedang diketik)</span>' +
+                    '<p class="text-xl sm:text-3xl font-bold text-white leading-relaxed">' + typedHtml + '</p>' +
+                  '</div>';
+              }
+              main.firstElementChild.insertAdjacentHTML('beforeend', html);
+            };
+
+            // Perbarui proyektor setiap kali operator mengetik (tanpa membuat ulang kolom jawaban)
+            document.addEventListener('input', function (e) {
+              if (e.target && e.target.id === 'student-answer-textarea') {
+                window.renderProjectorOverlayContent();
+              }
+            });
+          })();
+          JS
+
+          # Web 3 lokal: halaman yang dilayani server di APK (satu Wi-Fi)
+          cat > www/web3-local.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="id">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Web 3 - Input Soal (Koin)</title>
+            <script src="/tailwind.js" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s)"></script>
+            <style>body { font-family: system-ui, sans-serif; }</style>
+          </head>
+          <body class="bg-slate-950 text-slate-100 min-h-screen">
+            <header class="border-b border-slate-800 bg-slate-900">
+              <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+                <div>
+                  <h1 class="text-lg sm:text-2xl font-black text-indigo-400 tracking-wide">ARENA LELANG KUIS AI</h1>
+                  <p class="text-xs text-slate-400">Web 3 - Portal Input Soal Kelompok (Koin)</p>
+                </div>
+                <span id="status" class="text-xs font-bold px-3 py-1 rounded-full bg-slate-800 text-slate-400">Menghubungkan...</span>
+              </div>
+            </header>
+
+            <main class="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <section class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5">
+                <div class="border-b border-slate-800 pb-4">
+                  <h2 class="text-lg font-bold text-white">Input Soal Rahasia</h2>
+                  <p class="text-xs text-slate-400 mt-1">Soal dan kunci jawaban langsung dikirim ke aplikasi lelang panitia.</p>
+                </div>
+                <form id="form" class="space-y-4">
+                  <div>
+                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Pilih Kelompok Anda:</label>
+                    <select id="team" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white"></select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Pertanyaan Soal:</label>
+                    <textarea id="question" rows="4" required placeholder="Tuliskan pertanyaan soal di sini..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white"></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Kunci Jawaban Resmi:</label>
+                    <input id="answer" type="text" required placeholder="Kunci jawaban tepat..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white">
+                  </div>
+                  <p class="p-3 bg-slate-950 border border-slate-800 rounded-xl text-[11px] text-slate-400">
+                    Harga lelang awal soal ditentukan oleh panitia di aplikasi, dalam satuan koin.
+                  </p>
+                  <button id="submit" type="submit" class="w-full py-3 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 disabled:opacity-50">
+                    Simpan Soal Secara Rahasia
+                  </button>
+                  <p id="msg" class="text-xs text-center min-h-[1rem]"></p>
+                </form>
+              </section>
+
+              <section class="lg:col-span-7 space-y-6">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+                  <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Saldo Koin Kelompok</h2>
+                  <div id="koin" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+                  <h2 id="bank-title" class="text-lg font-bold text-white border-b border-slate-800 pb-3">Daftar Bank Soal Rahasia</h2>
+                  <p class="text-xs text-slate-400">Isi soal disembunyikan. Pengelolaan soal dilakukan panitia di aplikasi.</p>
+                  <div id="bank" class="space-y-3 max-h-[480px] overflow-y-auto pr-1"></div>
+                </div>
+              </section>
+            </main>
+
+            <script>
+              var state = { teams: [], questions: [] };
+              var lastTeamsSig = '';
+
+              var MAX = 5;
+              function countFor(id) {
+                return (state.questions || []).filter(function (q) { return String(q.teamId) === String(id); }).length;
+              }
+              function updateLimit() {
+                var id = document.getElementById('team').value;
+                var btn = document.getElementById('submit');
+                if (!id) return;
+                var n = countFor(id);
+                if (n >= MAX) {
+                  btn.disabled = true;
+                  btn.textContent = 'Batas ' + MAX + ' soal tercapai';
+                } else {
+                  btn.disabled = false;
+                  btn.textContent = 'Simpan Soal Secara Rahasia (' + n + '/' + MAX + ')';
+                }
+              }
+
+              function esc(t) {
+                return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+                  return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+                });
+              }
+
+              function setStatus(ok, text) {
+                var el = document.getElementById('status');
+                el.textContent = text;
+                el.className = 'text-xs font-bold px-3 py-1 rounded-full ' +
+                  (ok ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400');
+              }
+
+              function render() {
+                var teams = state.teams || [];
+                var questions = state.questions || [];
+
+                var sig = JSON.stringify(teams.map(function (t) { return [t.id, t.name]; }));
+                if (sig !== lastTeamsSig) {
+                  var sel = document.getElementById('team');
+                  var prev = sel.value;
+                  sel.innerHTML = teams.map(function (t) {
+                    return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>';
+                  }).join('');
+                  if (prev && teams.some(function (t) { return String(t.id) === prev; })) sel.value = prev;
+                  lastTeamsSig = sig;
+                }
+
+                document.getElementById('koin').innerHTML = teams.slice()
+                  .sort(function (a, b) { return b.points - a.points; })
+                  .map(function (t) {
+                    return '<div class="p-4 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between">' +
+                      '<span class="px-2.5 py-1 rounded font-bold text-white text-xs ' + esc(t.color || 'bg-slate-700') + '">' + esc(t.name) + '</span>' +
+                      '<span class="text-right"><span class="block text-amber-400 font-extrabold text-sm">' + esc(t.points) + ' Koin</span><span class="block text-[10px] text-slate-400">' + countFor(t.id) + '/' + MAX + ' soal</span></span></div>';
+                  }).join('') || '<p class="text-xs text-slate-500">Belum ada data kelompok.</p>';
+
+                document.getElementById('bank-title').textContent = 'Daftar Bank Soal Rahasia (' + questions.length + ' Soal)';
+                document.getElementById('bank').innerHTML = questions.map(function (q) {
+                  var t = teams.find(function (x) { return x.id === q.teamId; });
+                  return '<div class="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2">' +
+                    '<div class="flex justify-between items-center text-xs">' +
+                    '<span class="px-2.5 py-1 rounded font-bold text-white ' + esc(t ? (t.color || 'bg-slate-700') : 'bg-slate-700') + '">' + esc(t ? t.name : 'Unknown') + '</span>' +
+                    '<span class="text-amber-400 font-bold bg-amber-400/10 px-2.5 py-1 rounded border border-amber-400/20">Status: ' + esc(String(q.status || '').toUpperCase()) + '</span></div>' +
+                    '<p class="text-xs text-slate-400 font-mono italic">" Soal Disembunyikan (••••••••) "</p></div>';
+                }).join('');
+              }
+
+              async function load() {
+                try {
+                  var r = await fetch('/web3/state', { cache: 'no-store' });
+                  state = await r.json();
+                  render();
+                  updateLimit();
+                  setStatus(true, 'Terhubung');
+                } catch (e) {
+                  setStatus(false, 'Terputus dari tablet');
+                }
+              }
+
+              document.getElementById('form').addEventListener('submit', async function (ev) {
+                ev.preventDefault();
+                var msg = document.getElementById('msg');
+                var btn = document.getElementById('submit');
+                var teamId = document.getElementById('team').value;
+                var q = document.getElementById('question').value.trim();
+                var a = document.getElementById('answer').value.trim();
+                if (!teamId || !q || !a) { msg.textContent = 'Lengkapi semua kolom.'; msg.className = 'text-xs text-center text-rose-400'; return; }
+
+                btn.disabled = true;
+                msg.textContent = 'Mengirim...'; msg.className = 'text-xs text-center text-slate-400';
+                try {
+                  var r = await fetch('/web3/add', {
+                    method: 'POST',
+                    body: JSON.stringify({ teamId: teamId, questionText: q, correctAnswer: a })
+                  });
+                  var d = await r.json();
+                  if (d && d.ok) {
+                    document.getElementById('question').value = '';
+                    document.getElementById('answer').value = '';
+                    msg.textContent = 'Soal berhasil disimpan secara rahasia!';
+                    msg.className = 'text-xs text-center text-emerald-400';
+                    setTimeout(load, 2500);
+                  } else {
+                    msg.textContent = (d && d.error) || 'Gagal menyimpan soal.';
+                    msg.className = 'text-xs text-center text-rose-400';
+                  }
+                } catch (e) {
+                  msg.textContent = 'Gagal terhubung ke tablet. Pastikan satu Wi-Fi.';
+                  msg.className = 'text-xs text-center text-rose-400';
+                }
+                btn.disabled = false;
+                updateLimit();
+              });
+
+              document.getElementById('team').addEventListener('change', updateLimit);
+              load();
+              setInterval(load, 3000);
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Sinkron data aplikasi <-> server lokal (untuk Web 3)
+          cat > www/localsync.js <<'JS'
+          (function () {
+            var cap = window.Capacitor;
+            var isNative = cap && cap.isNativePlatform && cap.isNativePlatform();
+            var WL = isNative && cap.Plugins ? cap.Plugins.WebLink : null;
+            if (!WL) return;
+            var lastPushed = '';
+
+            function publicState() {
+              return {
+                teams: teams.map(function (t) { return { id: t.id, name: t.name, color: t.color, points: t.points }; }),
+                questions: questions.map(function (q) { return { id: q.id, teamId: q.teamId, status: q.status }; })
+              };
+            }
+
+            async function tick() {
+              try {
+                var st = JSON.stringify(publicState());
+                if (st !== lastPushed) {
+                  await WL.setState({ state: st });
+                  lastPushed = st;
+                }
+                var r = await WL.takeInbox();
+                var items = JSON.parse((r && r.json) || '[]');
+                var changed = false;
+                items.forEach(function (it) {
+                  if (questions.some(function (q) { return q.id === it.id; })) return;
+                  if (!teams.some(function (t) { return String(t.id) === String(it.teamId); })) return;
+                  var team = teams.find(function (t) { return String(t.id) === String(it.teamId); });
+                  var cnt = questions.filter(function (q) { return String(q.teamId) === String(team.id); }).length;
+                  if (cnt >= (window.MAX_SOAL || 5)) return;
+                  questions.push({
+                    id: it.id, teamId: team.id, questionText: it.questionText,
+                    correctAnswer: it.correctAnswer, initialBidPrice: 10, status: 'ready'
+                  });
+                  changed = true;
+                });
+                if (changed) { saveData(); window.renderApp(); }
+              } catch (e) {}
+            }
+
+            setInterval(tick, 1500);
+            setTimeout(tick, 1000);
+          })();
+          JS
+
+          # Batas 5 soal per kelompok (juga untuk formulir Web 1)
+          cat > www/limit.js <<'JS'
+          (function () {
+            window.MAX_SOAL = 5;
+            var origAdd = window.handleAddQuestion;
+            window.handleAddQuestion = function (e) {
+              var sel = document.getElementById('web1-team-select');
+              if (sel) {
+                var n = questions.filter(function (q) { return String(q.teamId) === String(sel.value); }).length;
+                if (n >= window.MAX_SOAL) {
+                  e.preventDefault();
+                  alert('Maksimal ' + window.MAX_SOAL + ' soal untuk setiap kelompok. Kelompok ini sudah mengirim ' + n + ' soal.');
+                  return;
+                }
+              }
+              origAdd(e);
+            };
+          })();
+          JS
+
+          # Efek suara: benar, salah, waktu habis
+          cat > www/effects.js <<'JS'
+          (function () {
+            var ctx = null;
+            function ac() {
+              if (!ctx) {
+                var C = window.AudioContext || window.webkitAudioContext;
+                if (!C) return null;
+                ctx = new C();
+              }
+              if (ctx.state === 'suspended') ctx.resume();
+              return ctx;
+            }
+            document.addEventListener('pointerdown', function () { ac(); }, true);
+
+            function tone(freq, start, dur, type, vol) {
+              var c = ac();
+              if (!c) return;
+              var t0 = c.currentTime + start;
+              var o = c.createOscillator();
+              var g = c.createGain();
+              o.type = type || 'sine';
+              o.frequency.setValueAtTime(freq, t0);
+              g.gain.setValueAtTime(0.0001, t0);
+              g.gain.exponentialRampToValueAtTime(vol || 0.35, t0 + 0.02);
+              g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+              o.connect(g);
+              g.connect(c.destination);
+              o.start(t0);
+              o.stop(t0 + dur + 0.05);
+            }
+
+            var SOUNDS = {
+              correct: function () {
+                tone(523.25, 0.00, 0.18, 'triangle', 0.4);
+                tone(659.25, 0.14, 0.18, 'triangle', 0.4);
+                tone(783.99, 0.28, 0.18, 'triangle', 0.4);
+                tone(1046.5, 0.42, 0.70, 'triangle', 0.45);
+                tone(1318.5, 0.42, 0.70, 'sine', 0.2);
+              },
+              wrong: function () {
+                tone(180, 0.00, 0.40, 'sawtooth', 0.35);
+                tone(130, 0.38, 0.65, 'sawtooth', 0.4);
+              },
+              timeout: function () {
+                for (var i = 0; i < 4; i++) {
+                  tone(880, i * 0.40, 0.18, 'square', 0.25);
+                  tone(660, i * 0.40 + 0.20, 0.18, 'square', 0.25);
+                }
+                tone(200, 1.7, 0.8, 'sawtooth', 0.35);
+              }
+            };
+
+            window.playResultSound = function (kind) {
+              try { if (SOUNDS[kind]) SOUNDS[kind](); } catch (e) {}
+            };
+
+            var prevRender = window.renderApp;
+            var lastState = null;
+            window.renderApp = function () {
+              prevRender();
+              var st = gameState;
+              if (lastState !== null && lastState !== st && st === 'RESULT') {
+                var k = window.resultKind ? window.resultKind() : null;
+                if (k) window.playResultSound(k);
+              }
+              lastState = st;
+            };
+          })();
+          JS
+
+          # Susunan arena: tombol BENAR/SALAH langsung tampil, jawaban sebenarnya muncul setelah SALAH
+          cat > www/flow.js <<'JS'
+          (function () {
+            var prevRender = window.renderApp;
+
+            function esc(t) {
+              return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+              });
+            }
+
+            function applyArena() {
+              var arena = document.getElementById('web2-main-arena');
+              if (!arena) return;
+
+              var q = questions.find(function (x) { return x.id === activeQuestionId; });
+              var author = q ? teams.find(function (t) { return t.id === q.teamId; }) : null;
+              var bidder = highestBidderId ? teams.find(function (t) { return t.id === highestBidderId; }) : null;
+
+              if (gameState === 'ANSWERING') {
+                if (document.getElementById('decision-panel')) return;
+                var ta = document.getElementById('student-answer-textarea');
+                if (!ta) return;
+                var eye = arena.querySelector('button[onclick^="showCorrectAnswer"]');
+                if (eye) {
+                  var box = eye.closest('.animate-fadeIn');
+                  if (box) box.remove();
+                }
+                showCorrectAnswer = false;
+                var holder = ta.closest('.space-y-4');
+                if (!holder) return;
+                holder.insertAdjacentHTML('beforeend',
+                  '<div id="decision-panel" class="p-4 bg-slate-950 border border-indigo-500/40 rounded-xl grid grid-cols-2 gap-4">' +
+                    '<button onclick="handleAnswerDecision(true)" class="py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center cursor-pointer shadow-md">Jawaban BENAR (Koin Utuh)</button>' +
+                    '<button onclick="handleAnswerDecision(false)" class="py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs flex items-center justify-center cursor-pointer shadow-md">Jawaban SALAH (Potong ' + esc(highestBid) + ' Koin)</button>' +
+                  '</div>');
+              } else if (gameState === 'RESULT') {
+                if (document.getElementById('reveal-panel')) return;
+                if (!evaluationResult || evaluationResult.isCorrect) return;
+                var card = arena.firstElementChild;
+                if (!card) return;
+                var typed = (studentAnswerInput || '').trim();
+                var el = document.createElement('div');
+                el.id = 'reveal-panel';
+                el.className = 'grid grid-cols-1 md:grid-cols-2 gap-3 text-left';
+                el.innerHTML =
+                  '<div class="p-3 bg-slate-900/90 rounded border border-slate-800">' +
+                    '<span class="text-[11px] text-slate-400 block font-medium uppercase">Jawaban Kelompok ' + esc(bidder ? bidder.name : 'Penjawab') + ' (Penjawab):</span>' +
+                    '<span class="text-slate-100 font-semibold">' + (typed ? esc(typed) : '(tidak ada jawaban)') + '</span>' +
+                  '</div>' +
+                  '<div class="p-3 bg-indigo-950/90 rounded border border-indigo-500/40">' +
+                    '<span class="text-[11px] text-indigo-300 block font-medium uppercase">Jawaban Kelompok ' + esc(author ? author.name : 'Pembuat Soal') + ' (Pembuat Soal):</span>' +
+                    '<span class="text-amber-400 font-bold">' + esc(q ? q.correctAnswer : '') + '</span>' +
+                  '</div>';
+                card.insertBefore(el, card.lastElementChild);
+              }
+            }
+
+            window.renderApp = function () {
+              prevRender();
+              applyArena();
+            };
+          })();
+          JS
+
+          sed -i 's#</body>#<script src="answers.js"></script><script src="second-screen.js"></script><script src="weblink.js"></script><script src="fixes.js"></script><script src="limit.js"></script><script src="flow.js"></script><script src="localsync.js"></script><script src="effects.js"></script></body>#' www/index.html
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bundle library supaya bisa offline (Tailwind dan Lucide)
+        run: |
+          cd www
+          if curl -fsSL "https://cdn.tailwindcss.com/3.4.17" -o tailwind.js; then
+            sed -i 's#https://cdn.tailwindcss.com#tailwind.js#' index.html
+          fi
+          if curl -fsSL "https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" -o lucide.min.js; then
+            sed -i 's#https://unpkg.com/lucide@latest#lucide.min.js#' index.html
+          fi
+          sed -i '/fonts.googleapis.com/d' index.html
+
+      - name: Ganti istilah Poin menjadi Koin di seluruh aplikasi
+        run: |
+          sed -i -E 's/\bPoin\b/Koin/g; s/\bpoin\b/koin/g; s/\bPOIN\b/KOIN/g; s/\bPts\b/Koin/g; s/\bpts\b/koin/g' www/index.html
+          grep -n -i -E '\bpoin\b|\bpts\b' www/index.html || echo "Tidak ada sisa istilah Poin"
+
+      - name: Tambah platform Android
+        run: npx cap add android
+
+      - name: Tambah kode native layar kedua (HDMI / USB-C)
+        run: |
+          DIR=android/app/src/main/java/com/kuislelang/ai
+          mkdir -p $DIR
+
+          cat > $DIR/MainActivity.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(SecondScreenPlugin.class);
+                  registerPlugin(WebLinkPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA
+
+          cat > $DIR/SecondScreenPlugin.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import android.app.Presentation;
+          import android.content.Context;
+          import android.hardware.display.DisplayManager;
+          import android.os.Bundle;
+          import android.view.Display;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "SecondScreen")
+          public class SecondScreenPlugin extends Plugin {
+              private Presentation presentation;
+              private WebView projectorWeb;
+              private boolean loaded = false;
+              private String pendingMain = "";
+              private String pendingFooter = "";
+
+              private Display findDisplay() {
+                  DisplayManager dm = (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
+                  Display[] ds = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+                  if (ds != null && ds.length > 0) return ds[0];
+                  Display[] all = dm.getDisplays();
+                  for (Display d : all) {
+                      if (d.getDisplayId() != Display.DEFAULT_DISPLAY) return d;
+                  }
+                  return null;
+              }
+
+              private void pushNow() {
+                  if (projectorWeb != null && loaded) {
+                      String js = "setContent(" + JSONObject.quote(pendingMain) + "," + JSONObject.quote(pendingFooter) + ");";
+                      projectorWeb.evaluateJavascript(js, null);
+                  }
+              }
+
+              @PluginMethod
+              public void isAvailable(PluginCall call) {
+                  JSObject r = new JSObject();
+                  r.put("available", findDisplay() != null);
+                  call.resolve(r);
+              }
+
+              @PluginMethod
+              public void show(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          if (presentation != null && presentation.isShowing()) {
+                              call.resolve();
+                              return;
+                          }
+                          Display d = findDisplay();
+                          if (d == null) {
+                              call.reject("Tidak ada layar kedua");
+                              return;
+                          }
+                          loaded = false;
+                          presentation = new ProjectorPresentation(getActivity(), d);
+                          presentation.setOnDismissListener(dialog -> {
+                              presentation = null;
+                              projectorWeb = null;
+                              loaded = false;
+                              notifyListeners("closed", new JSObject());
+                          });
+                          presentation.show();
+                          call.resolve();
+                      } catch (Exception e) {
+                          call.reject(String.valueOf(e.getMessage()));
+                      }
+                  });
+              }
+
+              @PluginMethod
+              public void update(final PluginCall call) {
+                  pendingMain = call.getString("main", "");
+                  pendingFooter = call.getString("footer", "");
+                  getActivity().runOnUiThread(() -> pushNow());
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void hide(final PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (presentation != null) presentation.dismiss();
+                      call.resolve();
+                  });
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  if (presentation != null) presentation.dismiss();
+                  super.handleOnDestroy();
+              }
+
+              private class ProjectorPresentation extends Presentation {
+                  ProjectorPresentation(Context ctx, Display display) {
+                      super(ctx, display);
+                  }
+
+                  @Override
+                  protected void onCreate(Bundle savedInstanceState) {
+                      super.onCreate(savedInstanceState);
+                      projectorWeb = new WebView(getContext());
+                      projectorWeb.setBackgroundColor(0xFF020617);
+                      WebSettings s = projectorWeb.getSettings();
+                      s.setJavaScriptEnabled(true);
+                      s.setDomStorageEnabled(true);
+                      projectorWeb.setWebViewClient(new WebViewClient() {
+                          @Override
+                          public void onPageFinished(WebView view, String url) {
+                              loaded = true;
+                              pushNow();
+                          }
+                      });
+                      setContentView(projectorWeb);
+                      projectorWeb.loadUrl("file:///android_asset/public/projector.html");
+                  }
+              }
+          }
+          JAVA
+
+          cat > $DIR/WebLinkPlugin.java <<'JAVA'
+          package com.kuislelang.ai;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import fi.iki.elonen.NanoHTTPD;
+          import java.io.InputStream;
+          import java.net.Inet4Address;
+          import java.net.InetAddress;
+          import java.net.NetworkInterface;
+          import java.util.Collections;
+          import java.util.HashMap;
+          import java.util.Map;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "WebLink")
+          public class WebLinkPlugin extends Plugin {
+              private LinkServer server;
+              private int port = 8080;
+              private volatile String main = "";
+              private volatile String footer = "";
+              private volatile long ver = 0;
+              private volatile String pubState = "{\"teams\":[],\"questions\":[]}";
+              private final JSONArray inbox = new JSONArray();
+
+              private String findIp() {
+                  try {
+                      for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                          if (!ni.isUp() || ni.isLoopback()) continue;
+                          for (InetAddress a : Collections.list(ni.getInetAddresses())) {
+                              if (a instanceof Inet4Address && a.isSiteLocalAddress()) {
+                                  return a.getHostAddress();
+                              }
+                          }
+                      }
+                  } catch (Exception e) {
+                  }
+                  return null;
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  try {
+                      if (server == null) {
+                          Exception last = null;
+                          for (int p = 8080; p <= 8090; p++) {
+                              try {
+                                  LinkServer s = new LinkServer(p);
+                                  s.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
+                                  server = s;
+                                  port = p;
+                                  break;
+                              } catch (Exception e) {
+                                  last = e;
+                              }
+                          }
+                          if (server == null) {
+                              call.reject("Server gagal dinyalakan: " + (last != null ? last.getMessage() : ""));
+                              return;
+                          }
+                      }
+                      String ip = findIp();
+                      JSObject r = new JSObject();
+                      if (ip != null) {
+                          r.put("url", "http://" + ip + ":" + port);
+                      }
+                      call.resolve(r);
+                  } catch (Exception e) {
+                      call.reject(String.valueOf(e.getMessage()));
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  if (server != null) {
+                      server.stop();
+                      server = null;
+                  }
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void update(PluginCall call) {
+                  main = call.getString("main", "");
+                  footer = call.getString("footer", "");
+                  ver++;
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void setState(PluginCall call) {
+                  pubState = call.getString("state", "{}");
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void takeInbox(PluginCall call) {
+                  JSObject r = new JSObject();
+                  synchronized (inbox) {
+                      r.put("json", inbox.toString());
+                      while (inbox.length() > 0) {
+                          inbox.remove(0);
+                      }
+                  }
+                  call.resolve(r);
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  if (server != null) {
+                      server.stop();
+                      server = null;
+                  }
+                  super.handleOnDestroy();
+              }
+
+              private class LinkServer extends NanoHTTPD {
+                  LinkServer(int p) {
+                      super(p);
+                  }
+
+
+                  private Response handleAdd(IHTTPSession session) {
+                      try {
+                          Map<String, String> files = new HashMap<>();
+                          session.parseBody(files);
+                          String body = files.get("postData");
+                          JSONObject d = new JSONObject(body == null ? "{}" : body);
+                          String teamId = d.optString("teamId", "");
+                          String text = d.optString("questionText", "").trim();
+                          String ans = d.optString("correctAnswer", "").trim();
+                          if (text.length() > 1000) text = text.substring(0, 1000);
+                          if (ans.length() > 500) ans = ans.substring(0, 500);
+
+                          boolean teamOk = false;
+                          JSONArray ts = new JSONObject(pubState).optJSONArray("teams");
+                          if (ts != null) {
+                              for (int i = 0; i < ts.length(); i++) {
+                                  if (teamId.equals(ts.getJSONObject(i).optString("id"))) teamOk = true;
+                              }
+                          }
+
+                          int count = 0;
+                          JSONArray qs = new JSONObject(pubState).optJSONArray("questions");
+                          if (qs != null) {
+                              for (int i = 0; i < qs.length(); i++) {
+                                  if (teamId.equals(qs.getJSONObject(i).optString("teamId"))) count++;
+                              }
+                          }
+                          synchronized (inbox) {
+                              for (int i = 0; i < inbox.length(); i++) {
+                                  if (teamId.equals(inbox.getJSONObject(i).optString("teamId"))) count++;
+                              }
+                          }
+
+                          JSONObject res = new JSONObject();
+                          if (!teamOk) {
+                              res.put("ok", false);
+                              res.put("error", "Kelompok tidak ditemukan");
+                          } else if (count >= 5) {
+                              res.put("ok", false);
+                              res.put("error", "Batas 5 soal per kelompok sudah tercapai");
+                          } else if (text.isEmpty() || ans.isEmpty()) {
+                              res.put("ok", false);
+                              res.put("error", "Soal dan kunci jawaban wajib diisi");
+                          } else {
+                              JSONObject item = new JSONObject();
+                              item.put("id", "q-" + System.currentTimeMillis() + "-" + (int) (Math.random() * 1000));
+                              item.put("teamId", teamId);
+                              item.put("questionText", text);
+                              item.put("correctAnswer", ans);
+                              synchronized (inbox) {
+                                  inbox.put(item);
+                              }
+                              res.put("ok", true);
+                          }
+                          Response r = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", res.toString());
+                          r.addHeader("Cache-Control", "no-store");
+                          return r;
+                      } catch (Exception e) {
+                          return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Gagal memproses soal\"}");
+                      }
+                  }
+
+                  @Override
+                  public Response serve(IHTTPSession session) {
+                      String uri = session.getUri();
+                      try {
+                          if (uri.equals("/state")) {
+                              JSONObject o = new JSONObject();
+                              o.put("ver", ver);
+                              o.put("main", main);
+                              o.put("footer", footer);
+                              Response r = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", o.toString());
+                              r.addHeader("Cache-Control", "no-store");
+                              return r;
+                          }
+                          if (uri.equals("/web3/state")) {
+                              Response r = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", pubState);
+                              r.addHeader("Cache-Control", "no-store");
+                              return r;
+                          }
+                          if (uri.equals("/web3/add") && session.getMethod() == Method.POST) {
+                              return handleAdd(session);
+                          }
+                          String asset = null;
+                          String mime = null;
+                          if (uri.equals("/") || uri.equals("/index.html")) {
+                              asset = "public/projector-web.html";
+                              mime = "text/html; charset=utf-8";
+                          } else if (uri.equals("/web3") || uri.equals("/web3/")) {
+                              asset = "public/web3-local.html";
+                              mime = "text/html; charset=utf-8";
+                          } else if (uri.equals("/tailwind.js")) {
+                              asset = "public/tailwind.js";
+                              mime = "application/javascript; charset=utf-8";
+                          }
+                          if (asset != null) {
+                              InputStream is = getContext().getAssets().open(asset);
+                              return newChunkedResponse(Response.Status.OK, mime, is);
+                          }
+                      } catch (Exception e) {
+                          return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Tidak ditemukan");
+                      }
+                      return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404");
+                  }
+              }
+          }
+          JAVA
+
+      - name: Izin mikrofon dan layanan suara di AndroidManifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" /><queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries><application#' $MANIFEST
+          grep -c RECORD_AUDIO $MANIFEST
+          sed -i '/^dependencies {/a\    implementation "org.nanohttpd:nanohttpd:2.3.1"' android/app/build.gradle
+          grep -n nanohttpd android/app/build.gradle
+
+      - name: Sinkronisasi aset web ke Android
+        run: npx cap sync android
+
+      - name: Build APK debug
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kuis-Lelang-AI-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
